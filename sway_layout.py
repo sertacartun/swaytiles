@@ -31,6 +31,7 @@ SPLITS = {"right": "splith", "down": "splitv", "left": "splith", "up": "splitv"}
 PARALLEL = {"left": ("splith", "tabbed"), "right": ("splith", "tabbed"), "up": ("splitv", "stacked"), "down": ("splitv", "stacked")}
 EVENTS = {0: "workspace", 1: "output", 3: "window", 5: "binding", 6: "shutdown", 7: "tick"}
 SUBSCRIPTIONS = ["window", "tick", "workspace", "binding", "output", "shutdown"]
+FOCUSING = re.compile(r"focus (left|right|up|down)")
 RESHAPING = re.compile(r"(?:^|[;,\]])\s*(?:split[hvt]?|layout)\b")
 
 
@@ -578,6 +579,16 @@ def neighbour(tree, workspace, direction):
     return next((ws for ws in found["nodes"] if ws["name"] == found.get("current_workspace")), None) if found else None
 
 
+def floater(workspace, node, direction):
+    axis, sign = (0 if direction in ("left", "right") else 1), (-1 if direction in ("left", "up") else 1)
+
+    def centre(con):
+        x, y = origin(con)
+        return (x + con["rect"]["width"] / 2, y + (con["rect"]["height"] + con["deco_rect"]["height"]) / 2)[axis]
+    ahead = [(sign * (centre(other) - centre(node)), other["id"]) for other in workspace["floating_nodes"] if other["id"] != node["id"]]
+    return min((pair for pair in ahead if pair[0] >= 0), key=lambda pair: pair[0], default=(None, None))[1]
+
+
 def known(value, choices, default):
     return value if isinstance(value, str) and value in choices else default
 
@@ -641,6 +652,8 @@ class Daemon:
         self.tiled = set()
         self.ratios = {}
         self.carried = None
+        self.focus = [None, None]
+        self.refocused = False
         self.session = runtime_path(sway, "json")
         self.paused, self.built = load_session(self.session)
         self.saved = self.remembered()
@@ -898,7 +911,7 @@ class Daemon:
         skip, arrived = self.placed(tree, new, moved)
         if skip:
             return self.remember()
-        tree = self.release(tree, new, moved)
+        tree = self.release(tree, new, moved and arrived is not None)
         tiles = {ws["id"]: tiled(ws) for ws in workspaces(tree)}
         present = {node["id"] for ws in workspaces(tree) for node in windows(ws)}
         self.tiled = (self.tiled & present) | {con for ids in tiles.values() for con in ids}
@@ -986,6 +999,24 @@ class Daemon:
         else:
             self.sway.command(f"[con_id={con}] {command if managed else native}")
 
+    def escape(self, direction, refocused):
+        tree = self.sway.tree()
+        node = focused_node(tree)
+        if node["type"] == "workspace":
+            floating = {con["id"] for con in node["floating_nodes"]}
+            latest = next((con for con in node["focus"] if con in floating), None)
+            if latest is not None and self.chosen(node["name"]) == "float":
+                self.sway.command(f"[con_id={latest}] focus")
+            return
+        source = next((ws for ws in workspaces(tree) if any(con["id"] == node["id"] for con in ws["floating_nodes"])), None)
+        if source is None or node.get("fullscreen_mode") or self.chosen(source["name"]) != "float":
+            return
+        previous = next((con for con in source["floating_nodes"] if con["id"] == self.focus[0]), None)
+        if refocused and previous is not None and floater(source, previous, direction) == node["id"]:
+            return
+        if floater(source, node, direction) is None and neighbour(tree, source, direction) is not None:
+            self.sway.command(f"focus output {direction}")
+
     def promote(self):
         tree = self.sway.tree()
         node = focused_node(tree)
@@ -1051,8 +1082,10 @@ class Daemon:
             elif payload.startswith("layout ") and payload[7:] in LAYOUTS:
                 self.choose(payload[7:])
         elif kind == "binding":
-            command = event["binding"].get("command", "")
-            if command == "nop layout master":
+            command, refocused, self.refocused = event["binding"].get("command", ""), self.refocused, False
+            if FOCUSING.fullmatch(command):
+                self.escape(FOCUSING.fullmatch(command)[1], refocused)
+            elif command == "nop layout master":
                 self.promote()
             elif command.startswith("nop layout move "):
                 argument = command.split(maxsplit=3)[3]
@@ -1073,6 +1106,8 @@ class Daemon:
                 self.rules.clear()
                 self.anchored.clear()
             self.arrange()
+        elif kind == "window" and change == "focus":
+            self.focus, self.refocused = [self.focus[1], event["container"]["id"]], True
         elif kind == "window" and change == "fullscreen_mode":
             self.arrange()
         elif kind == "window" and change in ("new", "close", "floating", "move"):

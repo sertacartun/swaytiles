@@ -1,11 +1,15 @@
 """Two outputs of different sizes and scales, like a laptop with a monitor."""
 
+import subprocess
+import time
+
 CONFIG = ("output HEADLESS-1 resolution 1920x1200 position 0 480 scale 1.25\n"
           "output HEADLESS-2 resolution 2560x1440 position 1536 0\n"
           "workspace 10 output HEADLESS-1\nworkspace 1 output HEADLESS-2\nworkspace 3 output HEADLESS-2\n"
           "workspace 4 output HEADLESS-1\n"
           "bindsym Mod4+F1 nop layout move left\nbindsym Mod4+F2 nop layout move right\n"
-          "bindsym Mod4+F3 nop layout move number 10\nbindsym Mod4+F6 nop layout move number 3\n")
+          "bindsym Mod4+F3 nop layout move number 10\nbindsym Mod4+F6 nop layout move number 3\n"
+          "bindsym Mod4+F4 focus left\nbindsym Mod4+F5 focus right\n")
 LAYOUTS = {"1": "master", "10": "stacked-master", "3": "float", "4": "tabbed"}
 
 
@@ -73,3 +77,39 @@ def test_two_outputs(session):
     assert s.shape("four") == "T[d1 d2 d3]"
     assert s.chosen("four") == "tabbed"
     assert s.alive
+
+
+def test_focus_leaves_a_float_workspace_at_its_edge(session):
+    s = session("master", workspaces=LAYOUTS, config=CONFIG, outputs=2)
+    s.command("workspace 10")
+    s.open("b1")
+    s.command("workspace 3")
+    s.open("c1")
+    s.open("c2")
+    s.key("F4")
+    assert s.focused() == "c1"
+    s.key("F4")
+    assert s.focused() == "b1"
+    s.key("F5")
+    assert s.focused() == "c1"
+    s.key("F5")
+    assert s.focused() == "c2"
+    s.key("F5")
+    assert s.focused() == "c2"
+
+
+def test_a_window_carried_to_a_float_workspace_stays_where_it_lands(session):
+    s = session("master", workspaces=LAYOUTS, config=CONFIG, outputs=2)
+    s.command("workspace 3")
+    s.open("c1")
+    s.command("workspace 10")
+    s.open("b1")
+    subprocess.run(["wtype", "-M", "logo", "-k", "F2", "-m", "logo"], env=s.env, check=True)
+    places, deadline = [], time.monotonic() + 1.5
+    while time.monotonic() < deadline:
+        node = s.node("b1")
+        if node and node["type"] == "floating_con" and (not places or places[-1] != node["rect"]):
+            places.append(node["rect"])
+        time.sleep(0.01)
+    assert len(places) == 1, places
+    assert s.shape("3") == "- F[c1 b1]" and floats_fit(s, "3")
