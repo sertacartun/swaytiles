@@ -217,3 +217,34 @@ def test_a_crash_leaves_nothing_broken(session):
     s.focus("w1")
     s.open("w3")
     assert s.shape() == "H[w1 V[w2 w3]]"
+
+
+def test_a_keyboard_resize_is_remembered(session):
+    s = session("master", config="bindsym Mod4+F8 resize grow width 320 px\n")
+    opened(s, 3)
+    s.focus("w1")
+    s.key("F8")
+    grown = s.width("w1")
+    assert grown > 0.6
+    s.close("w1")
+    assert s.width("w2") == grown
+
+
+def test_the_height_of_the_master_in_wide(session):
+    s = session("wide")
+    opened(s, 3)
+    s.command("[title=^w1$] resize set height 65 ppt")
+    s.close("w1")
+    node, ws = s.node("w2"), s.workspace()
+    assert round(node["rect"]["height"] / ws["rect"]["height"], 1) == 0.6
+
+
+def test_a_resize_without_any_event_is_still_kept(session):
+    s = session("centered")
+    opened(s, 2)
+    s.command("[title=^w1$] resize set width 65 ppt")
+    s.open("w3")
+    assert s.width("w1") == 0.65
+    s.command("[title=^w1$] resize set width 55 ppt")
+    s.choose("master")
+    assert s.width("w1") == 0.55

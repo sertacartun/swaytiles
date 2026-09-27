@@ -1,5 +1,4 @@
 import pytest
-
 from harness import Session, available
 
 HAVE_SWAY = available()

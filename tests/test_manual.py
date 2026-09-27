@@ -125,6 +125,29 @@ def test_a_native_move_counts_as_manual(session):
     for index in range(1, 4):
         s.open(f"w{index}")
     s.command("[title=^w3$] move left")
-    assert s.shape() == "H[w1 w3 V[w2]]"
+    assert s.shape() == "H[w1 w3 w2]"
     s.open("w4")
     assert s.shape() == "H[w1 w3 V[w2 w4]]"
+
+
+def test_a_style_changed_by_hand_survives_a_restart(session):
+    s = session("master")
+    for index in range(1, 4):
+        s.open(f"w{index}")
+    s.focus("w1")
+    s.command("layout toggle split")
+    s.stop_daemon()
+    s.start_daemon()
+    s.open("w4")
+    assert s.shape() == "V[w1 V[w2 w3 w4]]"
+
+
+def test_a_tabbed_stack_split_by_hand_becomes_master(session):
+    s = session("tabbed-master")
+    for index in range(1, 4):
+        s.open(f"w{index}")
+    s.focus("w2")
+    s.command("layout splitv")
+    s.open("w4")
+    assert s.shape() == "H[w1 V[w2 w3 w4]]"
+    assert s.chosen() == "master"

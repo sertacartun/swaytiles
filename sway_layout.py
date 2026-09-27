@@ -26,7 +26,6 @@ STEPS = 5
 TABBED = ("tabbed", "stacked")
 SPLITS = {"right": "splith", "down": "splitv", "left": "splith", "up": "splitv"}
 PARALLEL = {"left": ("splith", "tabbed"), "right": ("splith", "tabbed"), "up": ("splitv", "stacked"), "down": ("splitv", "stacked")}
-NEW_MODES = ("new-master", "new-stack")
 EVENTS = {0: "workspace", 1: "output", 3: "window", 5: "binding", 6: "shutdown", 7: "tick"}
 SUBSCRIPTIONS = ["window", "tick", "workspace", "binding", "output", "shutdown"]
 
@@ -240,6 +239,26 @@ def leaves(node):
     return [node] if isinstance(node, int) else [leaf for child in node[1] for leaf in leaves(child)]
 
 
+def bare(node):
+    return node if isinstance(node, int) else ("", [bare(child) for child in node[1]])
+
+
+def styled(node, styles, path=()):
+    if isinstance(node, int) or node is None:
+        return node
+    return (styles.get(path, node[0]), [styled(child, styles, (*path, index)) for index, child in enumerate(node[1])])
+
+
+def restyled(before, after, path=()):
+    if isinstance(before, int):
+        return {}
+    meaningful = len(before[1]) > 1 or before[0] in TABBED or after[0] in TABBED
+    found = {path: after[0]} if before[0] != after[0] and meaningful else {}
+    for index, (old, new) in enumerate(zip(before[1], after[1], strict=True)):
+        found.update(restyled(old, new, (*path, index)))
+    return found
+
+
 def layout_command(layout):
     return f"layout {'stacking' if layout == 'stacked' else layout}"
 
@@ -270,6 +289,17 @@ def leaf_nodes(node):
 
 def tiled(node):
     return [leaf["id"] for leaf in leaf_nodes(node)]
+
+
+def covered(node):
+    return any(child.get("fullscreen_mode") or covered(child) for child in node["nodes"] + node["floating_nodes"])
+
+
+def top(workspace):
+    node = workspace
+    while len(node["nodes"]) == 1 and node["layout"] not in TABBED and node["nodes"][0]["nodes"]:
+        node = node["nodes"][0]
+    return node
 
 
 def windows(workspace):
@@ -512,15 +542,47 @@ def load_state():
         saved = {}
     saved = saved if isinstance(saved, dict) else {}
     chosen = saved.get("workspaces") if isinstance(saved.get("workspaces"), dict) else {}
-    return {"layout": known(saved.get("layout"), LAYOUTS, "sway"), "new": known(saved.get("new"), ("master", "stack"), "stack"),
+    return {"layout": known(saved.get("layout"), LAYOUTS, "sway"),
             "workspaces": {name: layout for name, layout in chosen.items() if known(layout, LAYOUTS, None)}}
 
 
-def save_state(state):
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    temporary = STATE.with_name(f".{STATE.name}.{os.getpid()}")
+def save_state(state, path=None):
+    path = path or STATE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}")
     temporary.write_text(json.dumps(state))
-    os.replace(temporary, STATE)
+    os.replace(temporary, path)
+
+
+def runtime_path(sway, suffix):
+    runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
+    return runtime / f"sway-layout.{Path(sway.path).name}.{suffix}"
+
+
+def frozen(node):
+    if isinstance(node, int) and not isinstance(node, bool):
+        return node
+    valid = isinstance(node, list) and len(node) == 2 and node[0] in (*TABBED, *SPLITS.values()) and isinstance(node[1], list)
+    children = [frozen(child) for child in node[1]] if valid else [None]
+    return (node[0], children) if None not in children else None
+
+
+def load_session(path):
+    try:
+        saved = json.loads(path.read_text())
+    except (OSError, ValueError):
+        saved = {}
+    saved = saved if isinstance(saved, dict) else {}
+    pinned, styles, built = saved.get("pinned"), saved.get("styles"), saved.get("built")
+    built = {name: tree for name, tree in ((name, frozen(tree)) for name, tree in (built.items() if isinstance(built, dict) else ()))
+             if tree is not None}
+    pinned = {name: {con for con in cons if isinstance(con, int)} for name, cons in (pinned.items() if isinstance(pinned, dict) else ())
+              if isinstance(cons, list)}
+    styles = {name: {tuple(path): layout for path, layout in entries
+                     if isinstance(path, list) and all(isinstance(step, int) for step in path) and layout in (*TABBED, *SPLITS.values())}
+              for name, entries in (styles.items() if isinstance(styles, dict) else ()) if isinstance(entries, list)
+              and all(isinstance(entry, list) and len(entry) == 2 for entry in entries)}
+    return {name: cons for name, cons in pinned.items() if cons}, {name: entries for name, entries in styles.items() if entries}, built
 
 
 class Daemon:
@@ -534,16 +596,94 @@ class Daemon:
         self.where = {}
         self.names = {}
         self.pending = {}
-        self.pinned = {}
         self.areas = {}
+        self.tiled = set()
+        self.ratios = {}
+        self.session = runtime_path(sway, "json")
+        self.pinned, self.styles, self.built = load_session(self.session)
+        self.saved = self.remembered()
         self.sync_id = 0
         self.syncing = None
+
+    def remembered(self):
+        return {"pinned": {name: sorted(cons) for name, cons in self.pinned.items()},
+                "styles": {name: [[list(path), layout] for path, layout in sorted(entries.items())] for name, entries in self.styles.items()},
+                "built": dict(self.built)}
+
+    def remember(self):
+        now = self.remembered()
+        if now != self.saved:
+            save_state(now, self.session)
+            self.saved = now
 
     def chosen(self, name):
         return self.state["workspaces"].get(name)
 
     def tiling(self, name):
         return None if self.chosen(name) == "float" else LAYOUTS.get(self.chosen(name))
+
+    def target(self, name, ids):
+        return styled(trimmed(self.tiling(name)(ids)), self.styles.get(name, {})) if ids else None
+
+    def observe(self, workspace, ids, new):
+        name = workspace["name"]
+        built, present = self.built.get(name), trimmed(without(shape(workspace), new))
+        if isinstance(built, int) or isinstance(present, int) or None in (built, present) or bare(built) != bare(present):
+            return
+        changes = restyled(built, present)
+        if not changes:
+            return
+        ids = [con for con in ids if con != new]
+        styles = {**self.styles.get(name, {}), **changes}
+        wanted = styled(trimmed(self.tiling(name)(ids)), styles)
+        match = next((other for other, layout in LAYOUTS.items() if layout and other != "float" and trimmed(layout(ids)) == wanted), None)
+        if match:
+            self.state["workspaces"][name] = match
+            save_state(self.state)
+            self.styles.pop(name, None)
+        else:
+            self.styles[name] = styles
+        self.built[name] = present
+
+    def measure(self, workspace, ids):
+        node = top(workspace)
+        master = next((child for child in node["nodes"] if child["id"] == ids[0]), None) if ids else None
+        if node["layout"] in ("splith", "splitv") and len(node["nodes"]) > 1 and master is not None:
+            self.share(workspace["name"], node["layout"], master, node["rect"], len(node["nodes"]))
+
+    def share(self, name, layout, master, area, count):
+        axis = "width" if layout == "splith" else "height"
+        size = master["rect"][axis] + (master["deco_rect"]["height"] if axis == "height" else 0)
+        ratio = round(size / area[axis], 2)
+        if abs(ratio - 1 / count) < 0.02:
+            self.ratios.pop(name, None)
+        elif abs(ratio - self.ratios.get(name, 0)) >= 0.02:
+            self.ratios[name] = ratio
+
+    def farewell(self, node):
+        name = self.where.get(node["id"])
+        built = self.built.get(name)
+        if name in self.pinned or isinstance(built, int) or built is None or built[0] not in ("splith", "splitv") or len(built[1]) < 2:
+            return
+        master = next((con for con in self.order if con in leaves(built)), None)
+        workspace = next((ws for ws in workspaces(self.sway.tree()) if ws["name"] == name), None)
+        if master == node["id"] and master in built[1] and workspace is not None:
+            self.share(name, built[0], node, workspace["rect"], len(built[1]))
+
+    def measure_all(self, tree):
+        for workspace in workspaces(tree):
+            name = workspace["name"]
+            if self.tiling(name) is None or name in self.pinned or covered(workspace):
+                continue
+            ids = [con for con in self.order if con in tiled(workspace)]
+            if ids and trimmed(shape(workspace)) == self.target(name, ids):
+                self.measure(workspace, ids)
+
+    def resize(self, name, target, ids):
+        ratio = self.ratios.get(name)
+        if ratio is None or isinstance(target, int) or target[0] not in ("splith", "splitv") or ids[0] not in target[1]:
+            return []
+        return [f"[con_id={ids[0]}] resize set {'width' if target[0] == 'splith' else 'height'} {round(ratio * 100)} ppt"]
 
     def sync(self):
         self.sync_id += 1
@@ -585,7 +725,7 @@ class Daemon:
         held = marked(tree, AFTER)
         wanted, commands = {}, []
         for ws in workspaces(tree):
-            active = self.state["new"] == "stack" and self.chosen(ws["name"]) not in ("sway", "float")
+            active = self.chosen(ws["name"]) not in ("sway", "float")
             commands += self.tile_rule(ws["name"], active)
             ids = self.managed(ws, tiles[ws["id"]])
             if active and ids:
@@ -682,7 +822,7 @@ class Daemon:
             return True
         if moved and new in self.order:
             self.order.remove(new)
-            self.order.insert(0 if self.state["new"] == "master" else len(self.order), new)
+            self.order.append(new)
         self.where = where
         self.names = {ws["id"]: ws["name"] for ws in workspaces(tree)}
         return False
@@ -702,12 +842,13 @@ class Daemon:
     def shape_up(self, workspace, ids, new, moved, focused):
         name = workspace["name"]
         if name in self.pinned:
+            self.built.pop(name, None)
             managed = [con for con in ids if con not in self.pinned[name]]
-            if not (moved and new in managed[1:] and self.state["new"] == "stack"):
+            if not (moved and new in managed[1:]):
                 return False
             self.sway.command(*after(managed[managed.index(new) - 1], new))
             return True
-        target = trimmed(self.tiling(name)(ids)) if ids else None
+        target = self.built[name] = self.target(name, ids)
         if target is None or target == trimmed(shape(workspace)):
             return False
         reference = trimmed(without(target, new)) if new in ids else target
@@ -715,9 +856,11 @@ class Daemon:
         if reference != present and loose(reference) == loose(present):
             workspace = tidy(self.sway, workspace, reference, new)
             if trimmed(shape(workspace)) == target:
+                self.sway.command(*self.resize(name, target, ids))
                 return True
         if not restyle(self.sway, workspace, target) and (new not in ids or not insert(self.sway, workspace, target, new, focused)):
             rearrange(self.sway, current(self.sway, workspace["id"]), target, focused)
+        self.sway.command(*self.resize(name, target, ids))
         return True
 
     def arrange(self, new=None, moved=False):
@@ -727,11 +870,12 @@ class Daemon:
             self.state["workspaces"].update(dict.fromkeys(unseen, self.state["layout"]))
             save_state(self.state)
         if self.placed(tree, new, moved):
-            return
+            return self.remember()
         tree = self.release(tree, new, moved)
         tiles = {ws["id"]: tiled(ws) for ws in workspaces(tree)}
-        present = {con for ids in tiles.values() for con in ids}
-        self.order[:] = [con for con in self.order if con in present]
+        present = {node["id"] for ws in workspaces(tree) for node in windows(ws)}
+        self.tiled = (self.tiled & present) | {con for ids in tiles.values() for con in ids}
+        self.order[:] = [con for con in self.order if con in self.tiled]
         self.order += [con for ids in tiles.values() for con in ids if con not in self.order]
         for workspace in workspaces(tree):
             self.settle(workspace)
@@ -740,10 +884,18 @@ class Daemon:
         for workspace in workspaces(tree):
             name = workspace["name"]
             ids = [con for con in self.order if con in tiles[workspace["id"]]]
+            if covered(workspace):
+                continue
             if self.chosen(name) == "float":
                 self.float_all(workspace, ids, new, name in shown)
             elif self.tiling(name) is not None:
+                if name not in self.pinned:
+                    self.observe(workspace, ids, new)
+                    tree_shape = shape(workspace)
+                    if ids and (trimmed(tree_shape) == self.target(name, ids) or trimmed(without(tree_shape, new)) == self.built.get(name)):
+                        self.measure(workspace, ids)
                 shaped = self.shape_up(workspace, ids, new, moved, focused) or shaped
+        self.remember()
         if shaped:
             self.sync()
 
@@ -783,15 +935,13 @@ class Daemon:
             self.sway.command(f"[con_id={con}] {native}")
 
     def choose(self, choice):
-        if choice in NEW_MODES:
-            self.state["new"] = choice[4:]
-            save_state(self.state)
-            return self.arrange()
+        self.measure_all(self.sway.tree())
         name = self.sway.focused_workspace()
         previous = self.chosen(name)
         self.state["layout"] = self.state["workspaces"][name] = choice
         save_state(self.state)
-        self.pinned.pop(name, None)
+        for table in (self.pinned, self.styles, self.built):
+            table.pop(name, None)
         if previous == "float" and choice != "float":
             workspace = next(ws for ws in workspaces(self.sway.tree()) if ws["name"] == name)
             floated = [node["id"] for node in workspace["floating_nodes"] if f"{FLOATED}{node['id']}" in node["marks"]]
@@ -806,7 +956,7 @@ class Daemon:
         old, new = self.names.get(workspace["id"]), workspace["name"]
         if old is None or old == new:
             return
-        for table in (self.state["workspaces"], self.slots, self.pending, self.pinned, self.areas):
+        for table in (self.state["workspaces"], self.slots, self.pending, self.pinned, self.areas, self.ratios, self.styles, self.built):
             if old in table and new not in table:
                 table[new] = table.pop(old)
         save_state(self.state)
@@ -826,13 +976,15 @@ class Daemon:
             payload = event.get("payload", "")
             if payload == f"{SYNC} {self.syncing}":
                 self.syncing = None
-            elif payload.startswith("layout ") and payload[7:] in (*LAYOUTS, *NEW_MODES):
+            elif payload.startswith("layout ") and payload[7:] in LAYOUTS:
                 self.choose(payload[7:])
         elif kind == "binding":
             command = event["binding"].get("command", "")
             if command.startswith("nop layout move "):
                 argument = command.split(maxsplit=3)[3]
                 self.move_to(direction=argument) if argument in PARALLEL else self.move_to(target=argument)
+            else:
+                self.measure_all(self.sway.tree())
         elif kind == "output":
             self.arrange()
         elif kind == "workspace" and change == "focus":
@@ -845,12 +997,16 @@ class Daemon:
                 self.rules.clear()
                 self.anchored.clear()
             self.arrange()
+        elif kind == "window" and change == "fullscreen_mode":
+            self.arrange()
         elif kind == "window" and change in ("new", "close", "floating", "move"):
             con = event["container"]["id"]
+            if change == "close":
+                self.farewell(event["container"])
             if change == "new":
                 self.sync()
                 if con not in self.order:
-                    self.order.insert(0 if self.state["new"] == "master" else len(self.order), con)
+                    self.order.append(con)
             self.arrange(con, moved=change == "move")
 
     def run(self):
@@ -872,8 +1028,7 @@ class Daemon:
 
 
 def claim(sway):
-    runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
-    lock = open(runtime / f"sway-layout.{Path(sway.path).name}.lock", "w")
+    lock = open(runtime_path(sway, "lock"), "w")
     for _ in range(50):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -943,7 +1098,7 @@ def icon(name, tree, highlight):
 
 
 def select(sway, choice):
-    if choice in LAYOUTS or choice in NEW_MODES:
+    if choice in LAYOUTS:
         sway.tick(f"layout {choice}")
 
 

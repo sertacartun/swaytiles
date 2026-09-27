@@ -67,7 +67,7 @@ class Session:
         self.state = Path(base) / "state"
         self.cache = Path(base) / "cache"
         self.state.mkdir(parents=True, exist_ok=True)
-        self.state_file.write_text(json.dumps({"layout": layout, "new": "stack", "workspaces": workspaces or {}}))
+        self.state_file.write_text(json.dumps({"layout": layout, "workspaces": workspaces or {}}))
         self.errors = Path(base) / "daemon.err"
         self.config = Path(base) / "sway.conf"
         self.config.write_text("default_border normal\nfocus_follows_mouse no\n" + config)

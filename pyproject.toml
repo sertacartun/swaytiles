@@ -26,3 +26,8 @@ markers = ["sway: needs a headless sway and a GTK 4 test client"]
 
 [tool.ruff]
 line-length = 160
+extend-exclude = ["history"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["SIM115"]

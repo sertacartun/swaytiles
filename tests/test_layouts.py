@@ -1,9 +1,11 @@
 """Every layout builds the tree it describes, while windows come, go and switch."""
 
+import itertools
+
 import pytest
+from harness import expected
 
 import sway_layout
-from harness import expected
 
 TILING = [name for name, layout in sway_layout.LAYOUTS.items() if layout is not None and name != "float"]
 
@@ -39,7 +41,7 @@ def test_switching_between_every_pair_of_layouts(session):
     names = [*TILING, "float", "sway"]
     route = tour(names)
     assert len(route) == len(names) * (len(names) - 1) + 1
-    for previous, layout in zip(route, route[1:]):
+    for previous, layout in itertools.pairwise(route):
         s.choose(layout)
         if layout == "float":
             assert s.shape() == "- F[w1 w2 w3 w4]", f"{previous} -> {layout}"
