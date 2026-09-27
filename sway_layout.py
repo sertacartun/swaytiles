@@ -948,6 +948,27 @@ class Daemon:
         else:
             self.sway.command(f"[con_id={con}] {native}")
 
+    def promote(self):
+        tree = self.sway.tree()
+        node = focused_node(tree)
+        workspace = next((ws for ws in workspaces(tree) if node["id"] in tiled(ws)), None)
+        if workspace is None or self.tiling(workspace["name"]) is None or covered(workspace):
+            return
+        name, ids = workspace["name"], [con for con in self.order if con in tiled(workspace)]
+        pinned = self.pinned.get(name, set())
+        managed = [con for con in ids if con not in pinned]
+        if not managed or managed == [node["id"]]:
+            return
+        con = node["id"]
+        other = managed[1] if con == managed[0] else managed[0]
+        first, second = self.order.index(con), self.order.index(other)
+        self.order[first], self.order[second] = other, con
+        if con in pinned:
+            self.pinned[name] = (pinned - {con}) | {other}
+        self.sway.command(f"[con_id={con}] swap container with con_id {other}")
+        self.sync()
+        self.arrange()
+
     def choose(self, choice):
         self.measure_all(self.sway.tree())
         name = self.sway.focused_workspace()
@@ -994,7 +1015,9 @@ class Daemon:
                 self.choose(payload[7:])
         elif kind == "binding":
             command = event["binding"].get("command", "")
-            if command.startswith("nop layout move "):
+            if command == "nop layout master":
+                self.promote()
+            elif command.startswith("nop layout move "):
                 argument = command.split(maxsplit=3)[3]
                 self.move_to(direction=argument) if argument in PARALLEL else self.move_to(target=argument)
             else:

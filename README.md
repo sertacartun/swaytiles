@@ -8,6 +8,15 @@ It is a single Python file with no dependencies, driven over sway's IPC
 socket. New windows are placed by sway rules the daemon sets up, so they
 appear in their final place instead of jumping there.
 
+## Why another one
+
+Other sway layout daemons tend to fight the user: they flicker while
+rearranging, pull dialogs and scratchpad windows into the layout, undo
+tabs set by hand, reset sizes, drop fullscreen windows, or break with a
+second monitor. sway-layout is built around the opposite rule: arrange
+new windows, and leave alone whatever the user arranged. Every case
+above is covered by the headless test suite.
+
 ## Layouts
 
 | Layout | What it looks like |
@@ -71,7 +80,9 @@ sway-layout grid       # set a layout for the focused workspace
 
 `nop layout move left|right|up|down` and `nop layout move number N`
 bindings move the focused window the way the layout expects, including
-across outputs and into floating workspaces.
+across outputs and into floating workspaces. `nop layout master` swaps
+the focused window with the master; on the master itself it swaps with
+the top of the stack. Sizes stay where they are.
 
 ## Files
 
