@@ -73,7 +73,7 @@ the headless test suite.
 1. Install the program and the user service:
 
    ```sh
-   uv tool install git+https://github.com/USER/sway-layout   # or: pipx install .
+   uv tool install git+https://github.com/sertacartun/sway-layout   # or: pipx install .
    mkdir -p ~/.config/systemd/user
    cp contrib/sway-layout.service ~/.config/systemd/user/
    ```
