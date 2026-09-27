@@ -1198,7 +1198,8 @@ def boxes(node, x, y, width, height):
         tabs = [(child, x + index * width / count, y, width / count, 4) for index, child in enumerate(children)]
         return [*tabs, (children[0], x, y + 4, width, height - 4)]
     if layout == "float":
-        return [(child, x + index * 5, y + index * 4, width * 0.6, height * 0.6)
+        step = 0.4 / max(count - 1, 1)
+        return [(child, x + (count - 1 - index) * step * width, y + (count - 1 - index) * step * height, width * 0.6, height * 0.6)
                 for index, child in reversed(list(enumerate(children)))]
     if layout == "stacked":
         tabs = [(child, x, y + index * 4, width, 4) for index, child in enumerate(children)]
