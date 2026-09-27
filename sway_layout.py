@@ -680,6 +680,10 @@ class Daemon:
     def tiling(self, name):
         return None if name in self.paused else self.chosen_tiling(name)
 
+    def ordered(self, cons):
+        cons = set(cons)
+        return [con for con in self.order if con in cons]
+
     def target(self, name, ids):
         return trimmed(self.tiling(name)(ids)) if ids else None
 
@@ -690,18 +694,16 @@ class Daemon:
         present = without(shape(workspace), *extra)
         before = without(seen, *known.difference(ids)) if seen is not None else None
         if seen is not None and outline(before) != outline(present):
-            return self.adapt(workspace, present, bare(trimmed(before)) == bare(trimmed(present)))
-        found = conforming(self.tiling(name), shape(workspace)) if arrived in ids else None
-        if found:
+            self.adapt(workspace, present, bare(trimmed(before)) == bare(trimmed(present)))
+        elif arrived in ids and (found := conforming(self.tiling(name), shape(workspace))):
             reorder(self.order, found)
-        return True
 
     def adapt(self, workspace, present, restyled):
         name = workspace["name"]
         candidates = [(self.chosen(name), self.tiling(name))]
         if restyled:
             candidates += [(other, layout) for other, layout in LAYOUTS.items() if layout and other not in ("float", self.chosen(name))]
-        kept = [con for con in self.order if con in leaves(present)]
+        kept = self.ordered(leaves(present))
         for other, layout in candidates:
             found = conforming(layout, present)
             if found and (other == self.chosen(name) or found == kept):
@@ -709,10 +711,9 @@ class Daemon:
                 if other != self.chosen(name):
                     self.state["workspaces"][name] = other
                     save_state(self.state)
-                return True
+                return
         self.paused.add(name)
         self.built.pop(name, None)
-        return False
 
     def resume(self, workspace):
         name = workspace["name"]
@@ -751,7 +752,7 @@ class Daemon:
             name = workspace["name"]
             if self.tiling(name) is None or covered(workspace):
                 continue
-            ids = [con for con in self.order if con in tiled(workspace)]
+            ids = self.ordered(tiled(workspace))
             if ids and trimmed(shape(workspace)) == self.target(name, ids):
                 self.measure(workspace, ids)
 
@@ -760,6 +761,10 @@ class Daemon:
         if ratio is None or isinstance(target, int) or target[0] not in ("splith", "splitv") or ids[0] not in target[1]:
             return []
         return [f"[con_id={ids[0]}] resize set {'width' if target[0] == 'splith' else 'height'} {round(ratio * 100)} ppt"]
+
+    def insist(self, command):
+        for delay in (0.3, 1.0):
+            threading.Timer(delay, self.sway.command, [command]).start()
 
     def sync(self):
         self.sync_id += 1
@@ -800,7 +805,7 @@ class Daemon:
         for ws in workspaces(tree):
             active = self.chosen(ws["name"]) not in ("sway", "float") and ws["name"] not in self.paused
             commands += self.tile_rule(ws["name"], active)
-            ids = [con for con in self.order if con in tiles[ws["id"]]]
+            ids = self.ordered(tiles[ws["id"]])
             if active and ids:
                 wanted[AFTER + encoded(ws["name"])] = ids[-1]
         commands += [f"unmark {mark}" for mark in held if mark not in wanted]
@@ -853,8 +858,7 @@ class Daemon:
             start = slot + 1
             if con == new:
                 hidden.append((con, *geometry[:2], 0.45))
-                for delay in (0.3, 1.0):
-                    threading.Timer(delay, self.sway.command, [command]).start()
+                self.insist(command)
         self.slots[name] = free_slot(area, taken, start)
         self.sway.command(*commands, *self.float_rule(name, cascade(area, self.slots[name])))
         for args in hidden:
@@ -872,8 +876,10 @@ class Daemon:
         if new in self.order:
             self.order.remove(new)
             self.order.append(new)
-        carried, self.carried = new == self.carried, None if new == self.carried else self.carried
-        return False, None if carried else new
+        if new == self.carried:
+            self.carried = None
+            return False, None
+        return False, new
 
     def release(self, tree, new, moved):
         commands = []
@@ -921,20 +927,19 @@ class Daemon:
         self.tiled = (self.tiled & present) | {con for ids in tiles.values() for con in ids}
         self.order[:] = [con for con in self.order if con in self.tiled]
         self.order += [con for ids in tiles.values() for con in ids if con not in self.order]
-        paused = set(self.paused)
-        for workspace in workspaces(tree):
-            if workspace["name"] in paused and self.chosen_tiling(workspace["name"]) and not covered(workspace):
-                self.resume(workspace)
         for workspace in workspaces(tree):
             name = workspace["name"]
-            ids = [con for con in self.order if con in tiles[workspace["id"]]]
-            if ids and name not in paused and self.tiling(name) is not None and not covered(workspace):
+            if covered(workspace) or self.chosen_tiling(name) is None:
+                continue
+            if name in self.paused:
+                self.resume(workspace)
+            elif ids := self.ordered(tiles[workspace["id"]]):
                 self.inspect(workspace, ids, arrived)
         self.sway.command(*self.anchors(tree, tiles))
         focused, shown, shaped = focused_node(tree)["id"], visible(tree), False
         for workspace in workspaces(tree):
             name = workspace["name"]
-            ids = [con for con in self.order if con in tiles[workspace["id"]]]
+            ids = self.ordered(tiles[workspace["id"]])
             if covered(workspace):
                 continue
             if self.chosen(name) == "float":
@@ -952,12 +957,10 @@ class Daemon:
     def record(self, tree):
         for workspace in workspaces(tree):
             name = workspace["name"]
-            if name in self.paused or self.chosen_tiling(name) is None:
+            if name in self.paused or self.chosen_tiling(name) is None or not tiled(workspace):
                 self.built.pop(name, None)
-            elif tiled(workspace) and not covered(workspace):
+            elif not covered(workspace):
                 self.built[name] = trimmed(shape(workspace))
-            elif not tiled(workspace):
-                self.built.pop(name, None)
 
     def move_to(self, target=None, direction=None):
         tree = self.sway.tree()
@@ -996,8 +999,7 @@ class Daemon:
             self.sway.command(f"[con_id={con}] floating enable, mark --add {FLOATED}{con}, resize set {geometry[0]} px {geometry[1]} px, "
                               f"{command}, move absolute position {geometry[2]} px {geometry[3]} px",
                               *self.float_rule(name, cascade(area, self.slots[name])))
-            for delay in (0.3, 1.0):
-                threading.Timer(delay, self.sway.command, [f"[con_id={con}] {placement(*geometry)}"]).start()
+            self.insist(f"[con_id={con}] {placement(*geometry)}")
         elif floated and not floats:
             self.sway.command(f"[con_id={con}] unmark {FLOATED}{con}, floating disable, {command}")
         else:
@@ -1027,7 +1029,7 @@ class Daemon:
         workspace = next((ws for ws in workspaces(tree) if node["id"] in tiled(ws)), None)
         if workspace is None or self.tiling(workspace["name"]) is None or covered(workspace):
             return
-        ids = [con for con in self.order if con in tiled(workspace)]
+        ids = self.ordered(tiled(workspace))
         if len(ids) > 1:
             self.exchange(node["id"], ids[1] if node["id"] == ids[0] else ids[0])
 
@@ -1089,8 +1091,8 @@ class Daemon:
                 self.choose(payload[7:])
         elif kind == "binding":
             command, refocused, self.refocused = event["binding"].get("command", ""), self.refocused, False
-            if FOCUSING.fullmatch(command):
-                self.escape(FOCUSING.fullmatch(command)[1], refocused)
+            if focusing := FOCUSING.fullmatch(command):
+                self.escape(focusing[1], refocused)
             elif command == "nop layout master":
                 self.promote()
             elif command.startswith("nop layout move "):
