@@ -902,10 +902,8 @@ class Daemon:
         present = trimmed(without(shape(workspace), new))
         if reference != present and loose(reference) == loose(present):
             workspace = tidy(self.sway, workspace, reference, new)
-            if trimmed(shape(workspace)) == target:
-                self.sway.command(*self.resize(name, target, ids))
-                return True
-        if not restyle(self.sway, workspace, target) and (new not in ids or not insert(self.sway, workspace, target, new, focused)):
+        if (trimmed(shape(workspace)) != target and not restyle(self.sway, workspace, target)
+                and (new not in ids or not insert(self.sway, workspace, target, new, focused))):
             rearrange(self.sway, current(self.sway, workspace["id"]), target, focused)
         self.sway.command(*self.resize(name, target, ids))
         return True
