@@ -686,9 +686,10 @@ class Daemon:
         candidates = [(self.chosen(name), self.tiling(name))]
         if restyled:
             candidates += [(other, layout) for other, layout in LAYOUTS.items() if layout and other not in ("float", self.chosen(name))]
+        kept = [con for con in self.order if con in leaves(present)]
         for other, layout in candidates:
             found = conforming(layout, present)
-            if found:
+            if found and (other == self.chosen(name) or found == kept):
                 reorder(self.order, found)
                 if other != self.chosen(name):
                     self.state["workspaces"][name] = other

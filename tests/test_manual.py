@@ -118,6 +118,32 @@ def test_a_stack_made_tabbed_by_key_becomes_tabbed_master(session):
     assert s.shape() == "H[w1 T[w2 w3]]"
 
 
+def test_a_style_change_that_reorders_the_windows_pauses(session):
+    s = opened(session, "master", count=3)
+    s.pausing = True
+    s.focus("w3")
+    s.key("F7")
+    assert s.chosen() == "master" and s.paused() == {"1"}
+    assert s.shape() == "H[w1 H[w2 w3]]"
+
+
+def test_a_tabbed_workspace_split_by_key_pauses(session):
+    s = opened(session, "tabbed", count=3)
+    s.pausing = True
+    s.key("F7")
+    assert s.chosen() == "tabbed" and s.paused() == {"1"}
+    assert s.shape() == "H[w1 w2 w3]"
+
+
+def test_two_windows_split_by_key_become_wide(session):
+    s = opened(session, "master", count=2)
+    s.focus("w1")
+    s.key("F7")
+    assert s.chosen() == "wide" and s.paused() == set()
+    s.open("w3")
+    assert s.shape() == expected("wide", 3)
+
+
 def test_a_split_key_on_a_single_window_changes_nothing(session):
     s = opened(session, "master", count=3)
     s.focus("w2")
