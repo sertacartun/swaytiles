@@ -21,6 +21,7 @@ dev = ["pytest>=8", "ruff>=0.6"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = ["sway: needs a headless sway and a GTK 4 test client"]
 
 [tool.ruff]
