@@ -58,6 +58,9 @@ the headless test suite.
   until the window leaves fullscreen.
 - **Floating windows.** Dialogs float as usual. A window you float for a
   moment goes back to its place when you tile it again.
+  On a `float` workspace it works the other way round: a window you tile
+  by hand stays tiled until you float it again or pick `float` from the
+  menu.
 - **Restarts.** Manual arrangements survive a restart or a crash of the
   daemon.
 - **Several outputs.** Workspaces can move between outputs and outputs

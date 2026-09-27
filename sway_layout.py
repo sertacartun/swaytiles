@@ -634,7 +634,9 @@ def load_session(path):
     paused, built = saved.get("paused"), saved.get("built")
     built = {name: tree for name, tree in ((name, frozen(tree)) for name, tree in (built.items() if isinstance(built, dict) else ()))
              if tree is not None}
-    return {name for name in (paused if isinstance(paused, list) else ()) if isinstance(name, str)}, built
+    kept = saved.get("kept")
+    kept = {int(con): name for con, name in (kept.items() if isinstance(kept, dict) else ()) if con.isdigit() and isinstance(name, str)}
+    return {name for name in (paused if isinstance(paused, list) else ()) if isinstance(name, str)}, built, kept
 
 
 class Daemon:
@@ -655,13 +657,13 @@ class Daemon:
         self.focus = [None, None]
         self.refocused = False
         self.session = runtime_path(sway, "json")
-        self.paused, self.built = load_session(self.session)
+        self.paused, self.built, self.kept = load_session(self.session)
         self.saved = self.remembered()
         self.sync_id = 0
         self.syncing = None
 
     def remembered(self):
-        return {"paused": sorted(self.paused), "built": dict(self.built)}
+        return {"paused": sorted(self.paused), "built": dict(self.built), "kept": {str(con): name for con, name in sorted(self.kept.items())}}
 
     def remember(self):
         now = self.remembered()
@@ -913,6 +915,8 @@ class Daemon:
             return self.remember()
         tree = self.release(tree, new, moved and arrived is not None)
         tiles = {ws["id"]: tiled(ws) for ws in workspaces(tree)}
+        self.kept = {con: ws["name"] for ws in workspaces(tree) for con in tiles[ws["id"]]
+                     if self.kept.get(con) == ws["name"] and self.chosen(ws["name"]) == "float"}
         present = {node["id"] for ws in workspaces(tree) for node in windows(ws)}
         self.tiled = (self.tiled & present) | {con for ids in tiles.values() for con in ids}
         self.order[:] = [con for con in self.order if con in self.tiled]
@@ -934,7 +938,7 @@ class Daemon:
             if covered(workspace):
                 continue
             if self.chosen(name) == "float":
-                self.float_all(workspace, ids, new, name in shown)
+                self.float_all(workspace, [con for con in ids if con not in self.kept], new, name in shown)
             elif self.tiling(name) is not None:
                 tree_shape = shape(workspace)
                 if ids and (trimmed(tree_shape) == self.target(name, ids) or trimmed(without(tree_shape, new)) == self.built.get(name)):
@@ -1042,6 +1046,7 @@ class Daemon:
         save_state(self.state)
         self.paused.discard(name)
         self.built.pop(name, None)
+        self.kept = {con: place for con, place in self.kept.items() if place != name}
         if previous == "float" and choice != "float":
             workspace = next(ws for ws in workspaces(self.sway.tree()) if ws["name"] == name)
             floated = [node["id"] for node in workspace["floating_nodes"] if f"{FLOATED}{node['id']}" in node["marks"]]
@@ -1062,6 +1067,7 @@ class Daemon:
         if old in self.paused:
             self.paused.discard(old)
             self.paused.add(new)
+        self.kept = {con: new if place == old else place for con, place in self.kept.items()}
         save_state(self.state)
 
     def restore(self, sway):
@@ -1114,6 +1120,10 @@ class Daemon:
             con = event["container"]["id"]
             if change == "close":
                 self.farewell(event["container"])
+            if change == "floating" and event["container"]["type"] == "con" and self.chosen(self.where.get(con)) == "float":
+                self.kept[con] = self.where[con]
+            elif change == "floating":
+                self.kept.pop(con, None)
             if change == "new":
                 self.sync()
                 if con not in self.order:
@@ -1287,7 +1297,7 @@ def warn(message):
 
 def menu(sway, custom=None):
     state = load_state()
-    paused, _ = load_session(runtime_path(sway, "json"))
+    paused, _, _ = load_session(runtime_path(sway, "json"))
     workspace = sway.focused_workspace()
     names = list(LAYOUTS)
     chosen = state["workspaces"].get(workspace, state["layout"])

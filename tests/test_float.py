@@ -89,3 +89,34 @@ def test_a_window_floated_by_hand_on_a_float_workspace_stays_where_it_is(session
     s.open("w3")
     node = floats(s)[1]["w2"]
     assert (node["rect"]["x"], node["rect"]["y"] - node["deco_rect"]["height"]) == (10, 10)
+
+
+def test_a_window_tiled_by_hand_stays_tiled(session):
+    s = session("float", workspaces={"2": "master"}, config=MOVES + "bindsym Mod4+F8 floating toggle\n")
+    s.open("w1")
+    s.open("w2")
+    s.focus("w1")
+    s.key("F8")
+    assert s.shape() == "w1 F[w2]"
+    assert s.node("w1").get("opacity", 1) == 1
+    s.open("w3")
+    assert s.shape() == "w1 F[w2 w3]"
+    s.stop_daemon()
+    s.start_daemon()
+    s.open("w4")
+    assert s.shape() == "w1 F[w2 w3 w4]"
+    s.command("workspace 2")
+    s.open("x1")
+    s.command("[title=^x1$] move container to workspace 1")
+    s.command("workspace 1")
+    assert s.shape() == "w1 F[w2 w3 w4 x1]"
+    s.focus("w1")
+    s.key("F8")
+    assert s.shape().startswith("- F[")
+    s.focus("w2")
+    s.key("F8")
+    assert s.shape() == "w2 F[w3 w4 x1 w1]"
+    s.choose("float")
+    area, nodes = floats(s)
+    assert s.shape().startswith("- F[") and set(nodes) == {"w1", "w2", "w3", "w4", "x1"}
+    assert all(inside(area, node) and node.get("opacity", 1) == 1 for node in nodes.values())
