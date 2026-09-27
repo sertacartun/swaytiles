@@ -72,6 +72,7 @@ class Session:
         self.config = Path(base) / "sway.conf"
         self.config.write_text("default_border normal\nfocus_follows_mouse no\n" + config)
         self.outputs = outputs
+        self.pausing = False
         self.clients = []
         self.daemon = None
         self.sway = None
@@ -202,6 +203,10 @@ class Session:
     def chosen(self, name="1"):
         return json.loads(self.state_file.read_text())["workspaces"].get(name)
 
+    def paused(self):
+        sessions = list(self.base.glob("sway-layout.*.json"))
+        return set(json.loads(sessions[0].read_text()).get("paused", [])) if sessions else set()
+
     def width(self, title, of="1"):
         node, ws = self.node(title), self.workspace(of)
         return round(node["rect"]["width"] / ws["rect"]["width"], 2)
@@ -250,3 +255,7 @@ class Session:
     def choose(self, layout):
         subprocess.run([sys.executable, str(DAEMON), layout], env=self.env, check=True)
         self.settle()
+
+    def run(self, *arguments, env=None):
+        return subprocess.run([sys.executable, str(DAEMON), *arguments], env={**self.env, **(env or {})},
+                              capture_output=True, text=True, timeout=10)

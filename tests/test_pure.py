@@ -1,6 +1,7 @@
 """The layout arithmetic, without sway."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -49,14 +50,56 @@ def test_tree_helpers():
 
 
 def test_conforming_reads_the_logical_order():
-    workspace = {"id": 0, "type": "workspace", "layout": "splith", "nodes": [
-        {"id": 7, "type": "con", "layout": "none", "nodes": []},
-        {"id": 50, "type": "con", "layout": "splitv", "nodes": [
-            {"id": 5, "type": "con", "layout": "none", "nodes": []},
-            {"id": 6, "type": "con", "layout": "none", "nodes": []}]}]}
-    assert sl.conforming(sl.LAYOUTS["master"], workspace, [5, 6, 7], set()) == [7, 5, 6]
-    assert sl.conforming(sl.LAYOUTS["wide"], workspace, [5, 6, 7], set()) is None
-    assert sl.conforming(sl.LAYOUTS["master"], workspace, [5, 6, 7], {6}) == [7, 5]
+    present = ("splith", [7, ("splitv", [5, 6])])
+    assert sl.conforming(sl.LAYOUTS["master"], present) == [7, 5, 6]
+    assert sl.conforming(sl.LAYOUTS["wide"], present) is None
+    assert sl.conforming(sl.LAYOUTS["master"], ("splith", [7, ("splitv", [("splitv", [5]), 6])])) == [7, 5, 6]
+    assert sl.conforming(sl.LAYOUTS["master"], ("splith", [7, 5, 6])) is None
+    assert sl.conforming(sl.LAYOUTS["master"], None) is None
+
+
+def test_the_neighbour_in_a_direction():
+    def leaf(con, x, y, width, height):
+        return {"id": con, "type": "con", "layout": "none", "nodes": [], "focus": [],
+                "rect": {"x": x, "y": y, "width": width, "height": height}, "deco_rect": {"height": 0}}
+    stack = {"id": 50, "type": "con", "layout": "splitv", "nodes": [leaf(2, 600, 0, 400, 300), leaf(3, 600, 300, 400, 300)], "focus": [3, 2]}
+    workspace = {"id": 0, "type": "workspace", "layout": "splith", "nodes": [leaf(1, 0, 0, 600, 600), stack], "focus": [1, 50]}
+    master, top, bottom = workspace["nodes"][0], *stack["nodes"]
+    assert sl.beside(workspace, bottom, "left", [1, 2, 3]) == 1
+    assert sl.beside(workspace, bottom, "up", [1, 2, 3]) == 2
+    assert sl.beside(workspace, master, "right", [1, 2, 3]) == 2
+    assert sl.beside(workspace, master, "left", [1, 2, 3]) is None
+    stack["layout"] = "tabbed"
+    assert sl.beside(workspace, top, "right", [1, 2, 3]) == 3
+    assert sl.beside(workspace, top, "left", [1, 2, 3]) == 1
+    assert sl.beside(workspace, master, "right", [1, 2, 3]) == 3
+
+
+def test_the_session_is_validated(tmp_path):
+    path = tmp_path / "session.json"
+    path.write_text(json.dumps({"paused": ["1", 2, None], "built": {"1": ["splith", [1, ["tabbed", [2]]]], "2": ["x", [1]]},
+                                "pinned": {"1": [5]}}))
+    assert sl.load_session(path) == ({"1"}, {"1": ("splith", [1, ("tabbed", [2])])})
+    path.write_text("[1, 2]")
+    assert sl.load_session(path) == (set(), {})
+
+
+def test_the_menu_understands_every_kind_of_launcher(monkeypatch):
+    names = list(sl.LAYOUTS)
+    assert sl.picked_layout("3\n", names) == names[3]
+    assert sl.picked_layout("99", names) is None
+    assert sl.picked_layout("grid — Even grid  ●\n", names) == "grid"
+    assert sl.picked_layout("", names) is None
+    monkeypatch.setattr(sl.shutil, "which", lambda name: name if name in ("wofi", "bemenu") else None)
+    assert sl.launcher(None, 13, 2)[0][0] == "wofi"
+    assert sl.launcher("walker --dmenu", 13, 2) == (["walker", "--dmenu"], False)
+    monkeypatch.setattr(sl.shutil, "which", lambda name: None)
+    assert sl.launcher(None, 13, 2) == (None, False)
+
+
+def test_the_shipped_config_is_the_generated_one():
+    shipped = (Path(__file__).resolve().parent.parent / "contrib" / "sway.conf").read_text()
+    assert shipped == sl.CONFIG.format(command="sway-layout")
 
 
 def test_state_is_validated(tmp_path, monkeypatch):

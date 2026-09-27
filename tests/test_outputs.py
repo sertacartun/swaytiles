@@ -38,14 +38,12 @@ def test_two_outputs(session):
     s.focus("a4")
     s.key("F1")
     s.key("F1")
-    assert s.shape("10") == "H[a4 b1 S[b2 b3]]"
+    assert s.shape("10") == "H[a4 S[b2 b3 b1]]"
     s.open("b4")
-    assert s.shape("10") == "H[a4 b1 S[b2 b3 b4]]"
+    assert s.shape("10") == "H[a4 S[b2 b3 b1 b4]]"
     s.focus("b2")
     s.key("F2")
-    assert s.shape("10") == "H[a4 b1 S[b3 b4] b2]"
-    s.key("F2")
-    assert (s.shape("1"), s.shape("10")) == ("H[a1 V[a2 a3 b2]]", "H[a4 b1 S[b3 b4]]")
+    assert (s.shape("1"), s.shape("10")) == ("H[a1 V[a2 a3 b2]]", "H[a4 S[b3 b1 b4]]")
     s.focus("a2")
     s.key("F6")
     s.command("workspace 3")
@@ -53,7 +51,7 @@ def test_two_outputs(session):
     assert s.shape("3") == "- F[a2 c1]" and floats_fit(s, "3")
     s.focus("c1")
     s.key("F1")
-    assert s.shape("10") == "H[a4 b1 S[b3 b4 c1]]"
+    assert s.shape("10") == "H[a4 S[b3 b1 b4 c1]]"
     s.command("workspace 3")
     s.command("move workspace to output left")
     assert floats_fit(s, "3")

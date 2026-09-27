@@ -1,153 +1,234 @@
-"""A window placed by hand stays where it was put until the layout is chosen again."""
+"""A layout gives way to changes made by hand and takes over again when they fit it."""
 
 import signal
 
-import pytest
+from harness import expected
+
+import sway_layout
 
 MOVES = ("bindsym Mod4+F1 nop layout move left\nbindsym Mod4+F2 nop layout move right\n"
-         "bindsym Mod4+F3 nop layout move up\nbindsym Mod4+F4 nop layout move down\n")
-KEYS = {"left": "F1", "right": "F2", "up": "F3", "down": "F4"}
-
-PINNED = {
-    "master:w4:left": [
-        "H[w1 V[w2 w3 w4]]", "H[w1 w4 V[w2 w3]]", "H[w1 w4 V[w2 w3 w5]]", "H[w1 w4 V[w2 w3 w5 w6]]",
-        "H[w1 w4 V[w3 w5 w6]]", "H[w1 V[w3 w4 w5 w6]]", "H[w1 V[w3 w4 w5 w6 w7]]"],
-    "stacked-master:w4:left": [
-        "H[w1 S[w2 w3 w4]]", "H[w1 w4 S[w2 w3]]", "H[w1 w4 S[w2 w3 w5]]", "H[w1 w4 S[w2 w3 w5 w6]]",
-        "H[w1 w4 S[w3 w5 w6]]", "H[w1 S[w3 w4 w5 w6]]", "H[w1 S[w3 w4 w5 w6 w7]]"],
-    "tabbed-master:w2:left": [
-        "H[w1 T[w2 w3 w4]]", "H[w1 w2 T[w3 w4]]", "H[w1 w2 T[w3 w4 w5]]", "H[w1 w2 T[w3 w4 w5 w6]]",
-        "H[w1 T[w3 w4 w5 w6]]", "H[w1 T[w3 w4 w5 w6]]", "H[w1 T[w3 w4 w5 w6 w7]]"],
-    "master-right:w4:right": [
-        "H[V[w2 w3 w4] w1]", "H[V[w2 w3] w4 w1]", "H[V[w2 w3 w5] w4 w1]", "H[V[w2 w3 w5 w6] w4 w1]",
-        "H[V[w3 w5 w6] w4 w1]", "H[V[w3 w4 w5 w6] w1]", "H[V[w3 w4 w5 w6 w7] w1]"],
-    "wide:w4:up": [
-        "V[w1 H[w2 w3 w4]]", "V[w1 w4 H[w2 w3]]", "V[w1 w4 H[w2 w3 w5]]", "V[w1 w4 H[w2 w3 w5 w6]]",
-        "V[w1 w4 H[w3 w5 w6]]", "V[w1 H[w3 w4 w5 w6]]", "V[w1 H[w3 w4 w5 w6 w7]]"],
-    "centered:w3:up": [
-        "H[w3 w1 V[w2 w4]]", "V[w3 H[w1 V[w2 w4]]]", "V[w3 H[w1 V[w2 w4 w5]]]", "V[w3 H[w1 V[w2 w4 w5 w6]]]",
-        "V[w3 H[w1 V[w4 w5 w6]]]", "H[V[w4 w6] w1 V[w3 w5]]", "H[V[w4 w6] w1 V[w3 w5 w7]]"],
-    "dwindle:w3:up": [
-        "H[w1 V[w2 H[w3 w4]]]", "H[w1 V[w2 w3 w4]]", "H[w1 V[w2 w3 w4 w5]]", "H[w1 V[w2 w3 w4 w5 w6]]",
-        "H[w1 V[w3 w4 w5 w6]]", "H[w1 V[w3 H[w4 V[w5 w6]]]]", "H[w1 V[w3 H[w4 V[w5 H[w6 w7]]]]]"],
-    "spiral:w4:up": [
-        "H[w1 V[w2 H[w4 w3]]]", "H[w1 V[w2 w4 w3]]", "H[w1 V[w2 w4 H[w3 w5]]]", "H[w1 V[w2 w4 H[w3 w5 w6]]]",
-        "H[w1 V[w4 H[w3 w5 w6]]]", "H[w1 V[w3 H[V[w6 w5] w4]]]", "H[w1 V[w3 H[V[H[w6 w7] w5] w4]]]"],
-    "grid:w4:up": [
-        "V[H[w1 w2] H[w3 w4]]", "V[H[w1 w2 w4] w3]", "V[H[w1 w2 w4] H[w3 w5]]", "V[H[w1 w2 w4] H[w3 w5 w6]]",
-        "V[H[w1 w4 w3] H[w5 w6]]", "V[H[w1 w4 w3] H[w5 w6]]", "V[H[w1 w4 w3] H[w5 w6 w7]]"],
-    "tabbed:w3:down": [
-        "T[w1 w2 w3 w4]", "V[T[w1 w2 w4] w3]", "V[T[w1 w2 w4 w5] w3]", "V[T[w1 w2 w4 w5 w6] w3]",
-        "V[T[w1 w4 w5 w6] w3]", "T[w1 w3 w4 w5 w6]", "T[w1 w3 w4 w5 w6 w7]"],
-    "stacking:w2:right": [
-        "S[w1 w2 w3 w4]", "H[S[w1 w3 w4] w2]", "H[S[w1 w3 w4 w5] w2]", "H[S[w1 w3 w4 w5 w6] w2]",
-        "S[w1 w3 w4 w5 w6]", "S[w1 w3 w4 w5 w6]", "S[w1 w3 w4 w5 w6 w7]"],
-    "master:w3:up": [
-        "H[w1 V[w2 w3 w4]]", "H[w1 V[w3 w2 w4]]", "H[w1 V[w3 w2 w4 w5]]", "H[w1 V[w3 w2 w4 w5 w6]]",
-        "H[w1 V[w3 w4 w5 w6]]", "H[w1 V[w3 w4 w5 w6]]", "H[w1 V[w3 w4 w5 w6 w7]]"],
-}
+         "bindsym Mod4+F3 nop layout move up\nbindsym Mod4+F4 nop layout move down\n"
+         "bindsym Mod4+F5 layout tabbed\nbindsym Mod4+F6 splitv\nbindsym Mod4+F7 layout toggle split\n")
 
 
-@pytest.mark.parametrize("case", PINNED)
-def test_a_window_moved_by_hand_stays_put(session, case):
-    layout, mover, direction = case.split(":")
-    s = session(layout, config=MOVES)
-    for index in range(1, 5):
+def opened(session, layout, count=4, **options):
+    s = session(layout, config=MOVES, **options)
+    for index in range(1, count + 1):
         s.open(f"w{index}")
-    seen = [s.shape()]
-    s.focus(mover)
-    s.key(KEYS[direction])
-    seen.append(s.shape())
+    return s
+
+
+def test_layout_moves_swap_with_the_neighbour(session):
+    s = opened(session, "master")
+    s.focus("w4")
+    s.key("F1")
+    assert s.shape() == "H[w4 V[w2 w3 w1]]"
     s.focus("w1")
-    s.open("w5")
-    seen.append(s.shape())
-    s.open("w6")
-    seen.append(s.shape())
-    s.close("w2")
-    seen.append(s.shape())
-    s.choose(layout)
-    seen.append(s.shape())
-    s.open("w7")
-    seen.append(s.shape())
-    assert seen == PINNED[case]
-
-
-def test_a_restart_keeps_a_manual_placement(session):
-    s = session("master", config=MOVES)
-    for index in range(1, 5):
-        s.open(f"w{index}")
-    s.focus("w3")
+    s.key("F3")
+    assert s.shape() == "H[w4 V[w2 w1 w3]]"
+    s.key("F3")
+    s.key("F3")
+    assert s.shape() == "H[w4 V[w1 w2 w3]]"
+    s.focus("w4")
+    s.key("F2")
+    assert s.shape() == "H[w1 V[w4 w2 w3]]"
     s.key("F1")
     s.key("F1")
-    assert s.shape() == "H[w3 w1 V[w2 w4]]"
-    s.stop_daemon()
-    s.start_daemon()
-    assert s.shape() == "H[w3 w1 V[w2 w4]]"
+    assert s.shape() == "H[w4 V[w1 w2 w3]]"
     s.open("w5")
-    assert s.shape() == "H[w3 w1 V[w2 w4 w5]]"
-    s.stop_daemon(signal.SIGKILL)
-    s.start_daemon()
-    s.open("w6")
-    assert s.shape() == "H[w3 w1 V[w2 w4 w5 w6]]"
+    assert s.shape() == "H[w4 V[w1 w2 w3 w5]]"
+    assert s.focused() == "w5"
 
 
-def test_a_stack_made_tabbed_by_hand_stays_tabbed(session):
-    s = session("master")
-    for index in range(1, 4):
-        s.open(f"w{index}")
+def test_layout_moves_reorder_tabs_before_leaving_them(session):
+    s = opened(session, "tabbed-master")
     s.focus("w3")
-    s.command("layout tabbed")
+    s.key("F2")
+    assert s.shape() == "H[w1 T[w2 w4 w3]]"
+    s.focus("w2")
+    s.key("F1")
+    assert s.shape() == "H[w2 T[w1 w4 w3]]"
+    s.open("w5")
+    assert s.shape() == "H[w2 T[w1 w4 w3 w5]]"
+
+
+def test_layout_moves_in_every_layout_keep_it(session):
+    s = opened(session, "master", count=5)
+    for layout in ("master-right", "wide", "centered", "dwindle", "spiral", "grid", "stacked-master"):
+        s.choose(layout)
+        for title in ("w5", "w1"):
+            for key in ("F1", "F2", "F3", "F4"):
+                s.focus(title)
+                s.key(key)
+                assert s.chosen() == layout and not s.paused(), (layout, title, key)
+        moved = s.shape()
+        s.choose(layout)
+        assert s.shape() == moved, layout
+
+
+def test_a_native_move_that_breaks_the_layout_pauses_it(session):
+    s = opened(session, "master", count=3)
+    s.pausing = True
+    s.command("[title=^w3$] move left")
+    assert s.shape() == "H[w1 w3 w2]"
+    assert s.paused() == {"1"} and s.chosen() == "master"
+    s.open("w4")
+    assert s.shape() == "H[w1 w3 w4 w2]"
+    s.close("w3")
+    s.close("w4")
+    assert s.paused() == set()
+    s.open("w5")
+    assert s.shape() == "H[w1 V[w2 w5]]"
+
+
+def test_a_native_move_that_fits_the_layout_is_kept(session):
+    s = opened(session, "master")
+    s.command("[title=^w4$] move up")
+    assert s.shape() == "H[w1 V[w2 w4 w3]]"
+    s.open("w5")
+    assert s.shape() == "H[w1 V[w2 w4 w3 w5]]"
+    s.close("w1")
+    assert s.shape() == "H[w2 V[w4 w3 w5]]"
+
+
+def test_a_layout_key_pauses_at_once(session):
+    s = opened(session, "master", count=3)
+    s.pausing = True
+    s.focus("w1")
+    s.key("F7")
+    assert s.paused() == {"1"} and s.chosen() == "master"
+    before = s.shape()
+    s.open("w4")
+    assert "w4" in s.shape() and s.shape() != "H[w1 V[w2 w3 w4]]"
+    s.choose("master")
+    assert s.paused() == set()
+    assert s.shape() == "H[w1 V[w2 w3 w4]]"
+    assert before != s.shape()
+
+
+def test_a_stack_made_tabbed_by_key_becomes_tabbed_master(session):
+    s = opened(session, "master", count=3)
+    s.focus("w3")
+    s.key("F5")
     assert s.shape() == "H[w1 T[w2 w3]]"
+    assert s.chosen() == "tabbed-master" and s.paused() == set()
     s.open("w4")
     assert s.shape() == "H[w1 T[w2 w3 w4]]"
-    assert s.chosen() == "tabbed-master"
     s.close("w4")
     assert s.shape() == "H[w1 T[w2 w3]]"
 
 
-def test_a_split_direction_changed_by_hand_is_kept(session):
-    s = session("master")
-    for index in range(1, 4):
-        s.open(f"w{index}")
-    s.focus("w1")
-    s.command("layout toggle split")
-    assert s.shape() == "V[w1 V[w2 w3]]"
+def test_a_split_key_on_a_single_window_changes_nothing(session):
+    s = opened(session, "master", count=3)
+    s.focus("w2")
+    s.key("F6")
     s.open("w4")
-    assert s.shape() == "V[w1 V[w2 w3 w4]]"
-    s.choose("master")
     assert s.shape() == "H[w1 V[w2 w3 w4]]"
-    s.open("w5")
-    assert s.shape() == "H[w1 V[w2 w3 w4 w5]]"
+    assert s.chosen() == "master" and s.paused() == set()
 
 
-def test_a_native_move_counts_as_manual(session):
-    s = session("master")
-    for index in range(1, 4):
-        s.open(f"w{index}")
-    s.command("[title=^w3$] move left")
-    assert s.shape() == "H[w1 w3 w2]"
-    s.open("w4")
-    assert s.shape() == "H[w1 w3 V[w2 w4]]"
-
-
-def test_a_style_changed_by_hand_survives_a_restart(session):
-    s = session("master")
-    for index in range(1, 4):
-        s.open(f"w{index}")
-    s.focus("w1")
-    s.command("layout toggle split")
-    s.stop_daemon()
-    s.start_daemon()
-    s.open("w4")
-    assert s.shape() == "V[w1 V[w2 w3 w4]]"
-
-
-def test_a_tabbed_stack_split_by_hand_becomes_master(session):
-    s = session("tabbed-master")
-    for index in range(1, 4):
-        s.open(f"w{index}")
+def test_a_tabbed_stack_split_by_command_becomes_master(session):
+    s = opened(session, "tabbed-master", count=3)
     s.focus("w2")
     s.command("layout splitv")
     s.open("w4")
     assert s.shape() == "H[w1 V[w2 w3 w4]]"
     assert s.chosen() == "master"
+
+
+def test_a_change_by_command_that_fits_nothing_pauses(session):
+    s = opened(session, "master", count=3)
+    s.pausing = True
+    s.focus("w1")
+    s.command("layout toggle split")
+    s.open("w4")
+    assert s.paused() == {"1"}
+    assert s.shape() == "V[w1 V[w2 w3 w4]]"
+    s.choose("master")
+    assert s.shape() == "H[w1 V[w2 w3 w4]]"
+
+
+def test_a_pause_survives_a_restart(session):
+    s = opened(session, "master", count=3)
+    s.pausing = True
+    s.command("[title=^w3$] move left")
+    s.stop_daemon()
+    s.start_daemon()
+    assert s.paused() == {"1"}
+    assert s.shape() == "H[w1 w3 w2]"
+    s.stop_daemon(signal.SIGKILL)
+    s.start_daemon()
+    s.open("w4")
+    assert s.shape() == "H[w1 w3 w4 w2]"
+
+
+def test_a_window_dragged_into_the_stack_keeps_its_place(session):
+    s = opened(session, "master")
+    s.focus("w2")
+    s.command("workspace 2")
+    s.open("x1")
+    s.open("x2")
+    s.command("[title=^x1$] move container to workspace 1")
+    assert s.shape() == "H[w1 V[w2 x1 w3 w4]]"
+    s.open("x3")
+    s.command("workspace 1")
+    s.open("w5")
+    assert s.shape() == "H[w1 V[w2 x1 w3 w4 w5]]"
+
+
+def test_a_window_dropped_where_it_does_not_fit_joins_the_stack(session):
+    s = opened(session, "master", count=3)
+    s.focus("w1")
+    s.command("workspace 2")
+    s.open("x1")
+    s.command("[title=^x1$] move container to workspace 1")
+    assert s.shape() == "H[w1 V[w2 w3 x1]]"
+    assert s.paused() == set()
+
+
+def test_the_menu_marks_a_paused_workspace(session, tmp_path):
+    s = opened(session, "master", count=3)
+    s.pausing = True
+    s.command("[title=^w3$] move left")
+    listing = tmp_path / "listing"
+    script = tmp_path / "launcher.sh"
+    script.write_text(f'cat > "{listing}"\necho "grid — Even grid"\n')
+    result = s.run("menu", "--launcher", f"sh {script}")
+    s.settle()
+    assert result.returncode == 0, result.stderr
+    lines = listing.read_text().splitlines()
+    assert lines[list(sway_layout.LAYOUTS).index("master")].endswith("● paused")
+    assert "\0" not in listing.read_text()
+    assert s.chosen() == "grid" and s.paused() == set()
+    assert s.shape() == expected("grid", 3)
+
+
+def test_the_menu_says_when_no_launcher_is_found(session, tmp_path):
+    s = opened(session, "master", count=1)
+    result = s.run("menu", env={"PATH": str(tmp_path)})
+    assert result.returncode == 1
+    assert "no menu program found" in result.stderr
+    assert s.chosen() == "master"
+
+
+def test_the_config_command_prints_the_bindings(session):
+    s = opened(session, "master", count=1)
+    result = s.run("config")
+    assert result.returncode == 0
+    assert result.stdout == sway_layout.CONFIG.format(command="sway-layout")
+    assert s.run("nonsense").returncode == 2
+
+
+def test_the_menu_finds_fuzzel_and_reads_its_index(session, tmp_path):
+    s = opened(session, "master", count=3)
+    record = tmp_path / "record"
+    fake = tmp_path / "fuzzel"
+    fake.write_text(f'#!/bin/sh\necho "$@" > "{record}.args"\n/usr/bin/cat > "{record}.input"\necho {list(sway_layout.LAYOUTS).index("wide")}\n')
+    fake.chmod(0o755)
+    result = s.run("menu", env={"PATH": str(tmp_path)})
+    s.settle()
+    assert result.returncode == 0, result.stderr
+    assert f"--select-index {list(sway_layout.LAYOUTS).index('master')}" in (tmp_path / "record.args").read_text()
+    assert "\0icon\x1f" in (tmp_path / "record.input").read_text()
+    assert s.chosen() == "wide"
+    assert s.shape() == expected("wide", 3)

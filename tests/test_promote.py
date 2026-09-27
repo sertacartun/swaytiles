@@ -51,15 +51,18 @@ def test_other_layouts(session, layout, before, after):
     assert s.shape() == after
 
 
-def test_a_window_placed_by_hand_becomes_master(session):
+def test_a_paused_workspace_has_no_master(session):
     s = started(session, "master")
-    s.focus("w4")
-    s.key("F1")
+    s.pausing = True
+    s.command("[title=^w4$] move left")
     assert s.shape() == "H[w1 w4 V[w2 w3]]"
+    s.focus("w2")
     s.key("F9")
-    assert s.shape() == "H[w4 w1 V[w2 w3]]"
-    s.open("w5")
-    assert s.shape() == "H[w4 w1 V[w2 w3 w5]]"
+    assert s.shape() == "H[w1 w4 V[w2 w3]]"
+    s.choose("master")
+    s.focus("w4")
+    s.key("F9")
+    assert s.shape() == "H[w4 V[w2 w3 w1]]"
 
 
 def test_nothing_happens_where_there_is_no_master(session):
