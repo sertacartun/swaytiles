@@ -7,6 +7,7 @@ workspace. The layout is chosen per workspace from a menu and remembered.
 It is a single Python file with no dependencies, driven over sway's IPC
 socket. New windows are placed by sway rules the daemon sets up, so they
 appear in their final place instead of jumping there.
+[ARCHITECTURE.md](ARCHITECTURE.md) explains how it works.
 
 ## Why another one
 
