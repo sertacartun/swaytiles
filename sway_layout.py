@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import contextlib
 import fcntl
 import json
 import math
@@ -43,8 +44,9 @@ class Sway:
     @property
     def path(self):
         if not self.given:
-            self.given = os.environ.get("SWAYSOCK") or subprocess.run(
-                ["sway", "--get-socketpath"], capture_output=True, text=True).stdout.strip()
+            self.given = os.environ.get("SWAYSOCK") or discover()
+        if not self.given:
+            raise ConnectionError("no sway socket: SWAYSOCK is unset and no running sway was found")
         return self.given
 
     def connect(self):
@@ -113,6 +115,18 @@ class Sway:
                     kind, event = self.receive(connection)
                     yield EVENTS.get(kind), event
         return stream()
+
+
+def discover():
+    runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+    found = []
+    for path in runtime.glob(f"sway-ipc.{os.getuid()}.*.sock"):
+        try:
+            if Path(f"/proc/{path.name.split('.')[2]}/comm").read_text().strip() == "sway":
+                found.append((path.stat().st_mtime, str(path)))
+        except (OSError, IndexError):
+            continue
+    return max(found)[1] if found else None
 
 
 def flat(layout):
@@ -1045,10 +1059,14 @@ def stop(*_):
 
 def main():
     sway = Sway()
-    lock = claim(sway)
-    if lock is None:
-        print("layout: another daemon already runs for this sway session", file=sys.stderr)
+    try:
+        lock = claim(sway)
+    except ConnectionError as error:
+        print(f"sway-layout: {error}", file=sys.stderr)
         return 1
+    if lock is None:
+        print("sway-layout: another daemon already runs for this sway session", file=sys.stderr)
+        return 2
     for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(number, stop)
     daemon, alive = Daemon(sway), True
@@ -1058,10 +1076,8 @@ def main():
         alive = False
     finally:
         if alive:
-            try:
+            with contextlib.suppress(OSError, ValueError):
                 daemon.restore(Sway(sway.path, timeout=2))
-            except (OSError, ValueError):
-                pass
         lock.close()
     return 0
 
@@ -1073,13 +1089,13 @@ def boxes(node, x, y, width, height):
     count = len(children)
     if layout == "tabbed":
         tabs = [(child, x + index * width / count, y, width / count, 4) for index, child in enumerate(children)]
-        return tabs + [(children[0], x, y + 4, width, height - 4)]
+        return [*tabs, (children[0], x, y + 4, width, height - 4)]
     if layout == "float":
         return [(child, x + index * 5, y + index * 4, width * 0.6, height * 0.6)
                 for index, child in reversed(list(enumerate(children)))]
     if layout == "stacked":
         tabs = [(child, x, y + index * 4, width, 4) for index, child in enumerate(children)]
-        return tabs + [(children[0], x, y + 4 * count, width, height - 4 * count)]
+        return [*tabs, (children[0], x, y + 4 * count, width, height - 4 * count)]
     if layout == "splith":
         return [box for index, child in enumerate(children)
                 for box in boxes(child, x + index * width / count, y, width / count, height)]
@@ -1120,17 +1136,25 @@ def menu(sway):
         try:
             picked = subprocess.run(command, stdin=listing, capture_output=True, text=True).stdout.strip()
         except FileNotFoundError:
-            return print("layout: fuzzel is not installed", file=sys.stderr)
+            return print("sway-layout: fuzzel is not installed", file=sys.stderr)
     if picked.isdigit() and int(picked) < len(names):
         select(sway, names[int(picked)])
 
 
 def cli():
-    if sys.argv[1:] == ["menu"]:
-        return menu(Sway())
-    if sys.argv[1:]:
-        return select(Sway(), " ".join(sys.argv[1:]))
-    return main()
+    arguments = sys.argv[1:]
+    try:
+        if not arguments:
+            return main()
+        if arguments == ["menu"]:
+            return menu(Sway())
+        if len(arguments) == 1 and arguments[0] in LAYOUTS:
+            return select(Sway(), arguments[0])
+    except ConnectionError as error:
+        print(f"sway-layout: {error}", file=sys.stderr)
+        return 1
+    print(f"usage: sway-layout [menu | LAYOUT]\nlayouts: {', '.join(LAYOUTS)}", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ from harness import DAEMON
 def test_a_second_daemon_refuses_to_start(session):
     s = session("master")
     second = subprocess.run([sys.executable, str(DAEMON)], env=s.env, capture_output=True, text=True, timeout=15)
-    assert second.returncode == 1
+    assert second.returncode == 2
     assert "another daemon" in second.stderr
     assert s.alive
 
