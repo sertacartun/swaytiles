@@ -20,7 +20,7 @@ sys.path[:0] = [str(HERE.parent), str(HERE.parent / "tests")]
 
 import harness  # noqa: E402
 
-import sway_layout  # noqa: E402
+import swaytiles  # noqa: E402
 
 OUT = HERE / "gifs"
 WIDTH, HEIGHT, SCALE = 1280, 720, 0.75
@@ -112,7 +112,7 @@ class Recorder:
 def layout_demo(layout):
     recorder = Recorder(layout)
     try:
-        title = f"{layout}  ·  {sway_layout.DESCRIPTIONS[layout]}"
+        title = f"{layout}  ·  {swaytiles.DESCRIPTIONS[layout]}"
         count = 4 if layout in ("tabbed", "stacking") else 5
         for number in range(1, count + 1):
             recorder.open(number)
@@ -152,7 +152,7 @@ def tour():
         for layout in ("master", "master-right", "wide", "centered", "tabbed-master", "stacked-master",
                        "dwindle", "spiral", "grid", "tabbed", "stacking", "float"):
             recorder.choose(layout)
-            recorder.shoot(layout, sway_layout.DESCRIPTIONS[layout], 1.3)
+            recorder.shoot(layout, swaytiles.DESCRIPTIONS[layout], 1.3)
         recorder.save("tour")
     finally:
         recorder.stop()
@@ -186,6 +186,6 @@ def menu():
 
 
 if __name__ == "__main__":
-    wanted = sys.argv[1:] or ["tour", "menu", *(name for name in sway_layout.LAYOUTS if name != "sway")]
+    wanted = sys.argv[1:] or ["tour", "menu", *(name for name in swaytiles.LAYOUTS if name != "sway")]
     for name in wanted:
         tour() if name == "tour" else menu() if name == "menu" else layout_demo(name)

@@ -5,9 +5,9 @@ import itertools
 import pytest
 from harness import expected
 
-import sway_layout
+import swaytiles
 
-TILING = [name for name, layout in sway_layout.LAYOUTS.items() if layout is not None and name != "float"]
+TILING = [name for name, layout in swaytiles.LAYOUTS.items() if layout is not None and name != "float"]
 
 
 @pytest.mark.parametrize("layout", TILING)

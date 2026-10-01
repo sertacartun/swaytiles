@@ -4,7 +4,7 @@ import signal
 
 from harness import expected
 
-import sway_layout
+import swaytiles
 
 MOVES = ("bindsym Mod4+F1 nop layout move left\nbindsym Mod4+F2 nop layout move right\n"
          "bindsym Mod4+F3 nop layout move up\nbindsym Mod4+F4 nop layout move down\n"
@@ -223,7 +223,7 @@ def test_the_menu_marks_a_paused_workspace(session, tmp_path):
     s.settle()
     assert result.returncode == 0, result.stderr
     lines = listing.read_text().splitlines()
-    assert lines[list(sway_layout.LAYOUTS).index("master")].endswith("● paused")
+    assert lines[list(swaytiles.LAYOUTS).index("master")].endswith("● paused")
     assert "\0" not in listing.read_text()
     assert s.chosen() == "grid" and s.paused() == set()
     assert s.shape() == expected("grid", 3)
@@ -241,7 +241,7 @@ def test_the_config_command_prints_the_bindings(session):
     s = opened(session, "master", count=1)
     result = s.run("config")
     assert result.returncode == 0
-    assert result.stdout == sway_layout.CONFIG.format(command="sway-layout")
+    assert result.stdout == swaytiles.CONFIG.format(command="swaytiles")
     assert s.run("nonsense").returncode == 2
 
 
@@ -249,12 +249,12 @@ def test_the_menu_finds_fuzzel_and_reads_its_index(session, tmp_path):
     s = opened(session, "master", count=3)
     record = tmp_path / "record"
     fake = tmp_path / "fuzzel"
-    fake.write_text(f'#!/bin/sh\necho "$@" > "{record}.args"\n/usr/bin/cat > "{record}.input"\necho {list(sway_layout.LAYOUTS).index("wide")}\n')
+    fake.write_text(f'#!/bin/sh\necho "$@" > "{record}.args"\n/usr/bin/cat > "{record}.input"\necho {list(swaytiles.LAYOUTS).index("wide")}\n')
     fake.chmod(0o755)
     result = s.run("menu", env={"PATH": str(tmp_path)})
     s.settle()
     assert result.returncode == 0, result.stderr
-    assert f"--select-index {list(sway_layout.LAYOUTS).index('master')}" in (tmp_path / "record.args").read_text()
+    assert f"--select-index {list(swaytiles.LAYOUTS).index('master')}" in (tmp_path / "record.args").read_text()
     assert "\0icon\x1f" in (tmp_path / "record.input").read_text()
     assert s.chosen() == "wide"
     assert s.shape() == expected("wide", 3)

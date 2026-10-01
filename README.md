@@ -1,4 +1,4 @@
-# sway-layout
+# swaytiles
 
 Per-workspace tiling layouts for [sway](https://swaywm.org): master and
 stack, centred master, dwindle, spiral, grid, tabs and a floating
@@ -16,7 +16,7 @@ appear in their final place instead of jumping there.
 Other sway layout daemons tend to fight the user: they flicker while
 rearranging, pull dialogs and scratchpad windows into the layout, undo
 tabs set by hand, reset sizes, drop fullscreen windows, or break with a
-second monitor. sway-layout is built around the opposite rule: a
+second monitor. swaytiles is built around the opposite rule: a
 workspace is either fully arranged by its layout or left entirely to
 you, and anything you do by hand wins. Every case above is covered by
 the headless test suite.
@@ -156,15 +156,15 @@ one, and says when it is paused.
 1. Install the program and the user service:
 
    ```sh
-   uv tool install git+https://github.com/sertacartun/sway-layout   # or: pipx install .
+   uv tool install git+https://github.com/sertacartun/swaytiles   # or: pipx install .
    mkdir -p ~/.config/systemd/user
-   cp contrib/sway-layout.service ~/.config/systemd/user/
+   cp contrib/swaytiles.service ~/.config/systemd/user/
    ```
 
 2. Write the sway bindings to a file of their own:
 
    ```sh
-   sway-layout config > ~/.config/sway/sway-layout.conf
+   swaytiles config > ~/.config/sway/swaytiles.conf
    ```
 
    It starts the daemon and binds `$mod+Shift+t` to the menu, `$mod+m`
@@ -175,7 +175,7 @@ one, and says when it is paused.
 3. Include it at the end of your sway config and restart sway:
 
    ```
-   include ~/.config/sway/sway-layout.conf
+   include ~/.config/sway/swaytiles.conf
    ```
 
    Nothing else in your config is changed. The bindings in this file
@@ -185,17 +185,17 @@ one, and says when it is paused.
 The menu uses the first of fuzzel, rofi, wofi, tofi, bemenu, wmenu and
 dmenu that is installed. fuzzel and rofi also show a picture of each
 layout. Any other dmenu-style program works too:
-`sway-layout menu --launcher "walker --dmenu"`.
+`swaytiles menu --launcher "walker --dmenu"`.
 
-Errors go to the journal: `journalctl --user -u sway-layout`.
+Errors go to the journal: `journalctl --user -u swaytiles`.
 
 ## Commands
 
 ```sh
-sway-layout            # run the daemon
-sway-layout menu       # pick a layout for the focused workspace
-sway-layout grid       # set a layout for the focused workspace
-sway-layout config     # print the sway bindings
+swaytiles            # run the daemon
+swaytiles menu       # pick a layout for the focused workspace
+swaytiles grid       # set a layout for the focused workspace
+swaytiles config     # print the sway bindings
 ```
 
 `nop layout move left|right|up|down` swaps the focused window with its
@@ -214,15 +214,15 @@ Remove the `include` line from your sway config first, because the
 bindings in it do nothing without the daemon. Then:
 
 ```sh
-systemctl --user disable --now sway-layout.service
-rm ~/.config/systemd/user/sway-layout.service ~/.config/sway/sway-layout.conf
-uv tool uninstall sway-layout
+systemctl --user disable --now swaytiles.service
+rm ~/.config/systemd/user/swaytiles.service ~/.config/sway/swaytiles.conf
+uv tool uninstall swaytiles
 ```
 
 ## Files
 
-- `~/.local/state/sway-layout.json`: the layout of every workspace.
-- `$XDG_RUNTIME_DIR/sway-layout.*`: the lock, the paused workspaces and
+- `~/.local/state/swaytiles.json`: the layout of every workspace.
+- `$XDG_RUNTIME_DIR/swaytiles.*`: the lock, the paused workspaces and
   the last arrangement of the running session.
 
 ## Tests

@@ -1,5 +1,5 @@
 [project]
-name = "sway-layout"
+name = "swaytiles"
 version = "0.1.0"
 description = "Per-workspace tiling layouts for sway"
 readme = "README.md"
@@ -9,18 +9,18 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/sertacartun/sway-layout"
-Issues = "https://github.com/sertacartun/sway-layout/issues"
+Homepage = "https://github.com/sertacartun/swaytiles"
+Issues = "https://github.com/sertacartun/swaytiles/issues"
 
 [project.scripts]
-sway-layout = "sway_layout:cli"
+swaytiles = "swaytiles:cli"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["sway_layout.py"]
+only-include = ["swaytiles.py"]
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]

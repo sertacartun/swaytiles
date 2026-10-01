@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DAEMON = ROOT / "sway_layout.py"
+DAEMON = ROOT / "swaytiles.py"
 CLIENT = Path(__file__).resolve().parent / "client.py"
 CLIENT_PYTHON = os.environ.get("SWAY_LAYOUT_TEST_PYTHON", "/usr/bin/python3")
 LETTERS = {"splith": "H", "splitv": "V", "tabbed": "T", "stacked": "S"}
@@ -47,9 +47,9 @@ def tidy(node):
 
 
 def expected(layout, count, names=None):
-    import sway_layout
+    import swaytiles
     names = names or [f"w{index + 1}" for index in range(count)]
-    tree = sway_layout.LAYOUTS[layout](list(range(count)))
+    tree = swaytiles.LAYOUTS[layout](list(range(count)))
 
     def render(node):
         if isinstance(node, int):
@@ -58,7 +58,7 @@ def expected(layout, count, names=None):
         if len(children) == 1 and node[0] in ("splith", "splitv"):
             return children[0]
         return LETTERS[node[0]] + "[" + " ".join(children) + "]"
-    return render(sway_layout.normalize(tree))
+    return render(swaytiles.normalize(tree))
 
 
 class Session:
@@ -80,7 +80,7 @@ class Session:
 
     @property
     def state_file(self):
-        return self.state / "sway-layout.json"
+        return self.state / "swaytiles.json"
 
     def start(self):
         environment = {
@@ -119,7 +119,7 @@ class Session:
         self.settle()
 
     def locked(self):
-        for path in self.base.glob("sway-layout.*.lock"):
+        for path in self.base.glob("swaytiles.*.lock"):
             with open(path) as lock:
                 try:
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -204,7 +204,7 @@ class Session:
         return json.loads(self.state_file.read_text())["workspaces"].get(name)
 
     def paused(self):
-        sessions = list(self.base.glob("sway-layout.*.json"))
+        sessions = list(self.base.glob("swaytiles.*.json"))
         return set(json.loads(sessions[0].read_text()).get("paused", [])) if sessions else set()
 
     def width(self, title, of="1"):

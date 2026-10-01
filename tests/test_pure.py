@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-import sway_layout as sl
+import swaytiles as sl
 
 
 def test_master_layouts():
@@ -99,7 +99,7 @@ def test_the_menu_understands_every_kind_of_launcher(monkeypatch):
 
 def test_the_shipped_config_is_the_generated_one():
     shipped = (Path(__file__).resolve().parent.parent / "contrib" / "sway.conf").read_text()
-    assert shipped == sl.CONFIG.format(command="sway-layout")
+    assert shipped == sl.CONFIG.format(command="swaytiles")
 
 
 def test_state_is_validated(tmp_path, monkeypatch):

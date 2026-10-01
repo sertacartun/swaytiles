@@ -1,20 +1,20 @@
 # Architecture
 
-How sway-layout works inside, and why it is built this way. The code is
-one file, `sway_layout.py`, using only the Python standard library.
+How swaytiles works inside, and why it is built this way. The code is
+one file, `swaytiles.py`, using only the Python standard library.
 
 ## The pieces
 
 ```
 sway ──events──▶ Daemon.handle ──▶ arrange ──▶ one IPC command per step ──▶ sway
   ▲
-  └── tick "layout grid" ── sway-layout grid / sway-layout menu
+  └── tick "layout grid" ── swaytiles grid / swaytiles menu
 ```
 
-- **The daemon** (`sway-layout` with no arguments) runs as a user service.
+- **The daemon** (`swaytiles` with no arguments) runs as a user service.
   It subscribes to sway's window, workspace, output, binding, tick and
   shutdown events and reacts to each one in turn, on a single thread.
-- **The command line** (`sway-layout menu`, `sway-layout LAYOUT`) never
+- **The command line** (`swaytiles menu`, `swaytiles LAYOUT`) never
   touches windows. It sends sway a tick with the payload `layout NAME`,
   sway passes it to every subscriber, and the daemon applies it. The
   daemon stays the only process that changes the tree.
@@ -24,11 +24,11 @@ sway ──events──▶ Daemon.handle ──▶ arrange ──▶ one IPC com
 - **Keys** reach the daemon as `nop` bindings. sway runs `nop layout move
   left` as a no-op and reports it in a binding event, which the daemon
   reads and carries out. The daemon never edits the user's config and
-  never binds keys at runtime; `sway-layout config` only prints a file the
+  never binds keys at runtime; `swaytiles config` only prints a file the
   user includes.
 
 Only one daemon runs per sway session: it holds an `flock` on
-`$XDG_RUNTIME_DIR/sway-layout.<socket>.lock` and exits with code 2 if
+`$XDG_RUNTIME_DIR/swaytiles.<socket>.lock` and exits with code 2 if
 another one has it, which tells the service not to restart it.
 
 ## Layouts are pure functions
@@ -65,8 +65,8 @@ State is split by how long it should live:
 
 | Where | What | Lifetime |
 | --- | --- | --- |
-| `~/.local/state/sway-layout.json` | the layout of every workspace and the default for new ones | forever |
-| `$XDG_RUNTIME_DIR/sway-layout.<socket>.json` | paused workspaces, the last tree built on each workspace (`built`), windows tiled by hand on float workspaces (`kept`) | this sway session; survives a daemon restart |
+| `~/.local/state/swaytiles.json` | the layout of every workspace and the default for new ones | forever |
+| `$XDG_RUNTIME_DIR/swaytiles.<socket>.json` | paused workspaces, the last tree built on each workspace (`built`), windows tiled by hand on float workspaces (`kept`) | this sway session; survives a daemon restart |
 | memory | the window order, master sizes, float slots, focus history | this daemon |
 
 Window ids are only meaningful inside one sway session, which is why
@@ -106,7 +106,7 @@ brings every workspace in line:
 ## New windows appear in place
 
 A daemon that reacts to the `new` event moves a window that sway has
-already drawn somewhere else, which shows as a jump. sway-layout instead
+already drawn somewhere else, which shows as a jump. swaytiles instead
 sets sway rules so that sway puts the window in the right place before
 the first frame:
 
