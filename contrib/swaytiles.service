@@ -1,10 +1,11 @@
 [Unit]
 Description=Per-workspace tiling layouts for sway
-PartOf=graphical-session.target
-After=graphical-session.target
 
 [Service]
-ExecStart=%h/.local/bin/swaytiles
+ExecStart=%h/.local/bin/swaytiles --wait
 Restart=on-failure
-RestartSec=1
+RestartSec=5
 RestartPreventExitStatus=2
+
+[Install]
+WantedBy=default.target

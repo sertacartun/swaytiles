@@ -1295,8 +1295,30 @@ def stop(*_):
     raise SystemExit(0)
 
 
-def main(keys=True):
-    sway = Sway()
+def running():
+    """The socket of a sway that answers. systemd may still hold the SWAYSOCK
+    of an earlier session, so the variable alone is not trusted."""
+    for path in (os.environ.get("SWAYSOCK"), discover()):
+        if path:
+            with contextlib.suppress(OSError), socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+                probe.settimeout(2)
+                probe.connect(path)
+                return path
+    return None
+
+
+def wait(keys=True):
+    """Serve every sway session of this login: wait for sway, run until it
+    ends, wait for the next one."""
+    while True:
+        path = running()
+        if path and main(keys, path) == 2:
+            return 2
+        time.sleep(1)
+
+
+def main(keys=True, path=None):
+    sway = Sway(path)
     try:
         lock = claim(sway)
     except ConnectionError as error:
@@ -1369,18 +1391,14 @@ LAUNCHERS = ("fuzzel", "rofi", "wofi", "tofi", "bemenu", "wmenu", "dmenu")
 CONFIG = """\
 # Lines for your sway config, printed by `swaytiles config`. Pick your own keys.
 
-# Start the daemon with the session.
-exec {command}
-
 # Pick a layout for the focused workspace.
 bindsym $mod+Shift+t exec {command} menu
 
 # Swap the focused window with the master.
 bindsym $mod+m exec {command} swap
 
-# The keys that move windows need no lines here: the daemon takes over the
-# bindings for `move left` and `move container to workspace number 1` and
-# their like while it runs.
+# Without the systemd service, start the daemon from here:
+# exec {command}
 """
 
 
@@ -1455,8 +1473,8 @@ def config():
 def cli():
     arguments = sys.argv[1:]
     try:
-        if arguments in ([], ["--no-keys"]):
-            return main(keys=not arguments)
+        if set(arguments) <= {"--no-keys", "--wait"} and len(set(arguments)) == len(arguments):
+            return (wait if "--wait" in arguments else main)(keys="--no-keys" not in arguments)
         if arguments[0] == "menu" and len(arguments) in (1, 3) and arguments[1:2] in ([], ["--launcher"]):
             return menu(Sway(), arguments[2] if len(arguments) == 3 else None)
         if arguments == ["config"]:
@@ -1470,7 +1488,7 @@ def cli():
     except ConnectionError as error:
         print(f"swaytiles: {error}", file=sys.stderr)
         return 1
-    usage = "usage: swaytiles [--no-keys | menu [--launcher COMMAND] | swap | move DIRECTION | move number N | config | LAYOUT]"
+    usage = "usage: swaytiles [--wait] [--no-keys] | swaytiles [menu [--launcher COMMAND] | swap | move DIRECTION | move number N | config | LAYOUT]"
     print(f"{usage}\nlayouts: {', '.join(LAYOUTS)}", file=sys.stderr)
     return 2
 

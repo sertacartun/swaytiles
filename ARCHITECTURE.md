@@ -11,9 +11,12 @@ sway ──events──▶ Daemon.handle ──▶ arrange ──▶ one IPC com
   └── tick "layout grid" ── swaytiles grid / swaytiles menu
 ```
 
-- **The daemon** (`swaytiles` with no arguments) runs for the whole sway session.
-  It subscribes to sway's window, workspace, output, binding, tick and
-  shutdown events and reacts to each one in turn, on a single thread.
+- **The daemon** (`swaytiles` with no arguments) runs for the whole sway
+  session. It subscribes to sway's window, workspace, output, binding,
+  tick and shutdown events and reacts to each one in turn, on a single
+  thread. The user service runs `swaytiles --wait`, which starts before
+  sway, waits for a socket that answers, and after sway ends waits for
+  the next one, so nothing in the sway config has to start it.
 - **The command line** (`swaytiles menu`, `swaytiles LAYOUT`, `swaytiles
   swap`, `swaytiles move`) never touches windows. It sends sway a tick with the payload `layout NAME`,
   sway passes it to every subscriber, and the daemon applies it. The
