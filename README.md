@@ -25,13 +25,13 @@ moving windows follow the layout. Add two lines to your sway config,
 with keys you like, and reload sway:
 
 ```
-bindsym $mod+Shift+t exec ~/.local/bin/swaytiles menu
+bindsym $mod+Shift+t exec ~/.local/bin/swaytiles menu --launcher fuzzel
 bindsym $mod+m exec ~/.local/bin/swaytiles swap
 ```
 
-The first opens the layout menu, which needs fuzzel, rofi, wofi, tofi,
-bemenu, wmenu or dmenu. The second swaps the focused window with the
-master.
+The first opens the layout menu in the program named after `--launcher`:
+fuzzel, rofi, wofi, tofi, bemenu, wmenu or dmenu. The second swaps the
+focused window with the master.
 
 ## Uninstall
 

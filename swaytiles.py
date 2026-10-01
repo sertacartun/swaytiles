@@ -1391,8 +1391,8 @@ LAUNCHERS = ("fuzzel", "rofi", "wofi", "tofi", "bemenu", "wmenu", "dmenu")
 CONFIG = """\
 # Lines for your sway config, printed by `swaytiles config`. Pick your own keys.
 
-# Pick a layout for the focused workspace.
-bindsym $mod+Shift+t exec {command} menu
+# Pick a layout for the focused workspace, in the menu program you use.
+bindsym $mod+Shift+t exec {command} menu --launcher fuzzel
 
 # Swap the focused window with the master.
 bindsym $mod+m exec {command} swap
@@ -1403,9 +1403,11 @@ bindsym $mod+m exec {command} swap
 
 
 def launcher(custom, count, selected):
-    if custom:
-        return shlex.split(custom), False
-    found = next((name for name in LAUNCHERS if shutil.which(name)), None)
+    """A known program by its name alone gets the arguments that suit the
+    menu; anything longer is the command as given."""
+    words = shlex.split(custom)
+    if len(words) != 1 or words[0] not in LAUNCHERS:
+        return words, False
     commands = {
         "fuzzel": (["fuzzel", "--dmenu", "--index", "--no-sort", "--width", "45", "--lines", str(count), "--line-height", "40",
                     "--prompt", "layout: ", "--select-index", str(selected)], True),
@@ -1416,7 +1418,7 @@ def launcher(custom, count, selected):
         "wmenu": (["wmenu", "-i", "-l", str(count), "-p", "layout"], False),
         "dmenu": (["dmenu", "-i", "-l", str(count), "-p", "layout"], False),
     }
-    return commands.get(found, (None, False))
+    return commands[words[0]]
 
 
 def picked_layout(output, names):
@@ -1434,15 +1436,15 @@ def warn(message):
             subprocess.run(["notify-send", "swaytiles", message], capture_output=True, timeout=5)
 
 
-def menu(sway, custom=None):
+def menu(sway, custom):
     state = load_state()
     paused, _, _ = load_session(runtime_path(sway, "json"))
     workspace = sway.focused_workspace()
     names = list(LAYOUTS)
     chosen = state["workspaces"].get(workspace, state["layout"])
-    command, icons = launcher(custom, len(names), names.index(chosen) if chosen in names else 0)
-    if command is None:
-        warn(f"no menu program found; install one of {', '.join(LAUNCHERS)} or pass --launcher")
+    command, icons = launcher(custom or "", len(names), names.index(chosen) if chosen in names else 0)
+    if not command:
+        warn(f"say which menu program to use: swaytiles menu --launcher NAME, with one of {', '.join(LAUNCHERS)} or a dmenu-style command")
         return 1
     marker = "  ● paused" if workspace in paused else "  ●"
     entries = [f"{name} — {DESCRIPTIONS[name]}{marker if name == chosen else ''}" for name in names]
@@ -1488,7 +1490,7 @@ def cli():
     except ConnectionError as error:
         print(f"swaytiles: {error}", file=sys.stderr)
         return 1
-    usage = "usage: swaytiles [--wait] [--no-keys] | swaytiles [menu [--launcher COMMAND] | swap | move DIRECTION | move number N | config | LAYOUT]"
+    usage = "usage: swaytiles [--wait] [--no-keys] | swaytiles [menu --launcher COMMAND | swap | move DIRECTION | move number N | config | LAYOUT]"
     print(f"{usage}\nlayouts: {', '.join(LAYOUTS)}", file=sys.stderr)
     return 2
 

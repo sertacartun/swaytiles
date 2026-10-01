@@ -36,7 +36,7 @@
 ```sh
 swaytiles                 # run the daemon for this sway session
 swaytiles --wait          # run it for every sway session, as the service does
-swaytiles menu            # pick a layout for the focused workspace
+swaytiles menu --launcher fuzzel   # pick a layout, in the menu program you name
 swaytiles grid            # set a layout for the focused workspace
 swaytiles swap            # swap the focused window with the master
 swaytiles move left       # move the focused window: left, right, up, down
@@ -68,9 +68,10 @@ being started. `nop layout master` is the same for `swaytiles swap`.
   config file is never edited, and when swaytiles stops the keys are
   sway's own moves again. To turn this off, add `--no-keys` to the
   `ExecStart` line of the service.
-- **Menu program.** The menu uses the first of fuzzel, rofi, wofi, tofi,
-  bemenu, wmenu and dmenu that is installed. fuzzel and rofi also show a
-  picture of each layout. Any other dmenu-style program works too:
+- **Menu program.** `swaytiles menu --launcher NAME` opens the menu in
+  fuzzel, rofi, wofi, tofi, bemenu, wmenu or dmenu, whichever you name.
+  fuzzel and rofi also show a picture of each layout. Any other
+  dmenu-style program works with its whole command:
   `swaytiles menu --launcher "walker --dmenu"`.
 - **The service.** It runs `swaytiles --wait`, which waits for sway and
   serves one sway session after another. Errors go to the journal:

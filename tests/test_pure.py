@@ -84,17 +84,18 @@ def test_the_session_is_validated(tmp_path):
     assert sl.load_session(path) == (set(), {}, {})
 
 
-def test_the_menu_understands_every_kind_of_launcher(monkeypatch):
+def test_the_menu_understands_every_kind_of_launcher():
     names = list(sl.LAYOUTS)
     assert sl.picked_layout("3\n", names) == names[3]
     assert sl.picked_layout("99", names) is None
     assert sl.picked_layout("grid — Even grid  ●\n", names) == "grid"
     assert sl.picked_layout("", names) is None
-    monkeypatch.setattr(sl.shutil, "which", lambda name: name if name in ("wofi", "bemenu") else None)
-    assert sl.launcher(None, 13, 2)[0][0] == "wofi"
+    assert sl.launcher("wofi", 13, 2) == (["wofi", "--dmenu", "--insensitive", "--prompt", "layout"], False)
+    command, icons = sl.launcher("rofi", 13, 2)
+    assert icons and command[-2:] == ["-selected-row", "2"]
+    assert sl.launcher("rofi -dmenu", 13, 2) == (["rofi", "-dmenu"], False)
     assert sl.launcher("walker --dmenu", 13, 2) == (["walker", "--dmenu"], False)
-    monkeypatch.setattr(sl.shutil, "which", lambda name: None)
-    assert sl.launcher(None, 13, 2) == (None, False)
+    assert sl.launcher("", 13, 2) == ([], False)
 
 
 def test_the_shipped_config_is_the_generated_one():

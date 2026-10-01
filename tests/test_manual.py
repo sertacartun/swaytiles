@@ -229,11 +229,14 @@ def test_the_menu_marks_a_paused_workspace(session, tmp_path):
     assert s.shape() == expected("grid", 3)
 
 
-def test_the_menu_says_when_no_launcher_is_found(session, tmp_path):
+def test_the_menu_asks_which_launcher_to_use(session, tmp_path):
     s = opened(session, "master", count=1)
+    fake = tmp_path / "fuzzel"
+    fake.write_text("#!/bin/sh\necho 3\n")
+    fake.chmod(0o755)
     result = s.run("menu", env={"PATH": str(tmp_path)})
     assert result.returncode == 1
-    assert "no menu program found" in result.stderr
+    assert "--launcher" in result.stderr
     assert s.chosen() == "master"
 
 
@@ -245,13 +248,13 @@ def test_the_config_command_prints_the_bindings(session):
     assert s.run("nonsense").returncode == 2
 
 
-def test_the_menu_finds_fuzzel_and_reads_its_index(session, tmp_path):
+def test_the_menu_runs_fuzzel_by_name_and_reads_its_index(session, tmp_path):
     s = opened(session, "master", count=3)
     record = tmp_path / "record"
     fake = tmp_path / "fuzzel"
     fake.write_text(f'#!/bin/sh\necho "$@" > "{record}.args"\n/usr/bin/cat > "{record}.input"\necho {list(swaytiles.LAYOUTS).index("wide")}\n')
     fake.chmod(0o755)
-    result = s.run("menu", env={"PATH": str(tmp_path)})
+    result = s.run("menu", "--launcher", "fuzzel", env={"PATH": str(tmp_path)})
     s.settle()
     assert result.returncode == 0, result.stderr
     assert f"--select-index {list(swaytiles.LAYOUTS).index('master')}" in (tmp_path / "record.args").read_text()

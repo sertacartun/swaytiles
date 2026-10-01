@@ -171,7 +171,7 @@ def menu():
             "[colors]\nbackground=2E3440f2\ntext=D8DEE9ff\nmatch=88C0D0ff\nselection=434C5Eff\nselection-text=ECEFF4ff\n"
             "selection-match=88C0D0ff\nborder=88C0D0ff\n[border]\nwidth=2\nradius=10\n")
         environment = {**recorder.session.env, "XDG_CONFIG_HOME": str(config)}
-        process = subprocess.Popen([sys.executable, str(harness.DAEMON), "menu"], env=environment, start_new_session=True,
+        process = subprocess.Popen([sys.executable, str(harness.DAEMON), "menu", "--launcher", "fuzzel"], env=environment, start_new_session=True,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(2.5)
         raw = recorder.base / "menu.png"
