@@ -4,7 +4,9 @@ Tiling layouts for [sway](https://swaywm.org), one per workspace: master
 and stack, centred master, dwindle, spiral, grid, tabs and floating.
 Anything you arrange by hand wins over the layout.
 
-![Twelve layouts applied in turn to the same five windows](docs/gifs/tour.gif)
+
+https://github.com/user-attachments/assets/b0c3f7c7-6b3b-4294-8846-ea12e4dd858a
+
 
 ## Install
 
