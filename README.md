@@ -33,8 +33,6 @@ The first opens the layout menu, which needs fuzzel, rofi, wofi, tofi,
 bemenu, wmenu or dmenu. The second swaps the focused window with the
 master.
 
-<img src="docs/gifs/menu.png" alt="The layout menu in fuzzel" width="720">
-
 ## Uninstall
 
 ```sh
