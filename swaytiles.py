@@ -1366,10 +1366,39 @@ def boxes(node, x, y, width, height):
             for box in boxes(child, x, y + index * height / count, width, height / count)]
 
 
-def icon(name, tree, highlight):
+def fuzzel_text(path=None, seen=None):
+    """The colour fuzzel writes its text in, so the icons match any theme:
+    fuzzel draws an SVG's currentColor black whatever the theme is."""
+    if path is None:
+        home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+        folders = [home, *(Path(folder) for folder in (os.environ.get("XDG_CONFIG_DIRS") or "/etc/xdg").split(":") if folder)]
+        path = next((folder / "fuzzel/fuzzel.ini" for folder in folders if (folder / "fuzzel/fuzzel.ini").is_file()), None)
+    seen = set() if seen is None else seen
+    colour, section = None, "main"
+    if path is None or path in seen:
+        return colour
+    seen.add(path)
+    try:
+        lines = Path(path).read_text(errors="replace").splitlines()
+    except OSError:
+        return colour
+    for line in lines:
+        line = line.strip()
+        if line.startswith("["):
+            section = line.strip("[] ").lower()
+            continue
+        key, _, value = (part.strip() for part in line.partition("="))
+        if key == "include":
+            colour = fuzzel_text(Path(value).expanduser(), seen) or colour
+        elif section == "colors" and key == "text" and re.fullmatch(r"[0-9a-fA-F]{8}", value):
+            colour = f"#{value[:6]}"
+    return colour
+
+
+def icon(name, tree, highlight, colour):
     rects = "".join(
         f'<rect x="{x + 1:.1f}" y="{y + 1:.1f}" width="{width - 2:.1f}" height="{height - 2:.1f}" rx="1" '
-        f'fill="{"#FFFFFF" if leaf == highlight else "none"}" stroke="#FFFFFF" stroke-width="1"/>'
+        f'fill="{colour if leaf == highlight else "none"}" stroke="{colour}" stroke-width="1"/>'
         for leaf, x, y, width, height in boxes(normalize(tree), 0, 0, 48, 30))
     path = ICONS / f"{name}.svg"
     path.write_text(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 30">{rects}</svg>')
@@ -1450,7 +1479,9 @@ def menu(sway, custom):
     entries = [f"{name} — {DESCRIPTIONS[name]}{marker if name == chosen else ''}" for name in names]
     if icons:
         ICONS.mkdir(parents=True, exist_ok=True)
-        entries = [f"{entry}\0icon\x1f{icon(name, (layout or flat('splith'))(list(range(5))), None if layout is None else 0)}"
+        # fuzzel's own default text colour, and for the others a grey that shows on light and on dark.
+        colour = (fuzzel_text() or "#657b83") if command[0] == "fuzzel" else "#808080"
+        entries = [f"{entry}\0icon\x1f{icon(name, (layout or flat('splith'))(list(range(5))), None if layout is None else 0, colour)}"
                    for entry, (name, layout) in zip(entries, LAYOUTS.items(), strict=True)]
     with tempfile.TemporaryFile("w+") as listing:
         listing.write("".join(entry + "\n" for entry in entries))

@@ -113,3 +113,21 @@ def test_state_is_validated(tmp_path, monkeypatch):
     sl.save_state({"layout": "grid", "workspaces": {}})
     assert json.loads((tmp_path / "state.json").read_text())["layout"] == "grid"
     assert list(tmp_path.iterdir()) == [tmp_path / "state.json"]
+
+
+def test_the_icons_take_the_colour_of_fuzzels_text(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_DIRS", str(tmp_path / "none"))
+    assert sl.fuzzel_text() is None
+    (tmp_path / "fuzzel").mkdir()
+    config = tmp_path / "fuzzel" / "fuzzel.ini"
+    config.write_text("[main]\ntext=11111111\n[colors]\nbackground=000000ff\nselection-text=ffffffff\n")
+    assert sl.fuzzel_text() is None
+    config.write_text("[colors]\n text = D8DEE9ff \n")
+    assert sl.fuzzel_text() == "#D8DEE9"
+    theme = tmp_path / "theme.ini"
+    theme.write_text(f"include={config}\n[colors]\ntext=abcdef80\n")
+    config.write_text(f"include={theme}\n[border]\nwidth=2\n")
+    assert sl.fuzzel_text() == "#abcdef"
+    config.write_text(f"include={theme}\n[colors]\ntext=nonsense\n")
+    assert sl.fuzzel_text() == "#abcdef"
