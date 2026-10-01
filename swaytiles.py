@@ -1369,7 +1369,7 @@ def boxes(node, x, y, width, height):
 def icon(name, tree, highlight):
     rects = "".join(
         f'<rect x="{x + 1:.1f}" y="{y + 1:.1f}" width="{width - 2:.1f}" height="{height - 2:.1f}" rx="1" '
-        f'fill="{"#8FC3D2" if leaf == highlight else "#4C566A"}" stroke="#D8DEE9" stroke-width="0.6"/>'
+        f'fill="{"#FFFFFF" if leaf == highlight else "none"}" stroke="#FFFFFF" stroke-width="1"/>'
         for leaf, x, y, width, height in boxes(normalize(tree), 0, 0, 48, 30))
     path = ICONS / f"{name}.svg"
     path.write_text(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 30">{rects}</svg>')
