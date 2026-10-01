@@ -38,14 +38,14 @@ def test_switching_between_every_pair_of_layouts(session):
     s = session("master")
     for index in range(1, 5):
         s.open(f"w{index}")
-    names = [*TILING, "float", "sway"]
+    names = [*TILING, "float", "default"]
     route = tour(names)
     assert len(route) == len(names) * (len(names) - 1) + 1
     for previous, layout in itertools.pairwise(route):
         s.choose(layout)
         if layout == "float":
             assert s.shape() == "- F[w1 w2 w3 w4]", f"{previous} -> {layout}"
-        elif layout != "sway":
+        elif layout != "default":
             assert s.shape() == expected(layout, 4), f"{previous} -> {layout}"
         assert s.chosen() == layout
     assert s.alive

@@ -76,3 +76,25 @@ def test_nothing_happens_where_there_is_no_master(session):
     assert s.fullscreen("w2")
     assert s.shape() == "H[w1 w2*]"
     assert s.alive
+
+
+def test_the_swap_command_does_what_the_key_does(session):
+    s = started(session, "master")
+    s.focus("w3")
+    assert s.run("swap").returncode == 0
+    s.settle()
+    assert s.shape() == "H[w3 V[w2 w1 w4]]"
+    assert s.focused() == "w3"
+
+
+def test_the_move_command_does_what_the_key_does(session):
+    s = started(session, "master")
+    s.focus("w3")
+    assert s.run("move", "up").returncode == 0
+    s.settle()
+    assert s.shape() == "H[w1 V[w3 w2 w4]]"
+    assert s.run("move", "number", "5").returncode == 0
+    s.settle()
+    assert s.shape() == "H[w1 V[w2 w4]]"
+    assert s.run("move", "sideways").returncode == 2
+    assert s.run("move").returncode == 2

@@ -103,7 +103,8 @@ The layout turns that list into a tree of sway containers.
 </tr>
 </table>
 
-`sway` turns the daemon off for a workspace and leaves it to sway.
+`default` is no layout: the workspace is left to sway, as if swaytiles
+were not running. It is the layout until you pick one.
 
 ## Picking a layout
 
@@ -113,12 +114,15 @@ Each workspace has its own layout, remembered across restarts; a new
 workspace starts with the last layout picked. The menu marks the current
 one, and says when it is paused.
 
-| Key | Action |
+| Command | Action |
 | --- | --- |
-| `$mod+Shift+t` | Open the layout menu |
-| `$mod+m` | Swap the focused window with the master |
-| `$mod+Shift+←↓↑→` / `hjkl` | Move the focused window, following the layout |
-| `$mod+Shift+1` … `0` | Send the focused window to a workspace |
+| `swaytiles menu` | Open the layout menu |
+| `swaytiles swap` | Swap the focused window with the master |
+
+Bind these two to keys you like, as shown under [Install](#install).
+The keys that move windows are yours already: the ones your config binds
+to `move left` or `move container to workspace number 3` follow the
+layout while swaytiles runs.
 
 ## What it respects
 
@@ -151,73 +155,93 @@ one, and says when it is paused.
   can come and go. Floating windows are fitted to the output they end up
   on.
 
+## Try it
+
+Nothing has to be installed or configured to have a look. swaytiles is
+one Python file that needs only Python 3.10 or newer:
+
+```sh
+curl -LO https://raw.githubusercontent.com/sertacartun/swaytiles/main/swaytiles.py
+python3 swaytiles.py &        # start it for this sway session
+python3 swaytiles.py grid     # arrange the focused workspace
+python3 swaytiles.py default  # hand it back to sway
+kill %1                       # stop it
+```
+
 ## Install
 
-1. Install the program and the user service:
+```sh
+uv tool install git+https://github.com/sertacartun/swaytiles
+```
 
-   ```sh
-   uv tool install git+https://github.com/sertacartun/swaytiles   # or: pipx install .
-   mkdir -p ~/.config/systemd/user
-   cp contrib/swaytiles.service ~/.config/systemd/user/
-   ```
+`pipx install git+https://github.com/sertacartun/swaytiles` does the
+same, or copy `swaytiles.py` to `~/.local/bin/swaytiles` and make it
+executable.
 
-2. Write the sway bindings to a file of their own:
+Add three lines to your sway config, with keys you like, and restart sway:
 
-   ```sh
-   swaytiles config > ~/.config/sway/swaytiles.conf
-   ```
+```
+exec ~/.local/bin/swaytiles
+bindsym $mod+Shift+t exec ~/.local/bin/swaytiles menu
+bindsym $mod+m exec ~/.local/bin/swaytiles swap
+```
 
-   It starts the daemon and binds `$mod+Shift+t` to the menu, `$mod+m`
-   to swap with the master, and `$mod+Shift+` direction keys and numbers
-   to moves that follow the layout. Change the keys there if you like.
-   It uses `$mod`, as the default sway config defines it.
+The menu needs fuzzel, rofi, wofi, tofi, bemenu, wmenu or dmenu.
 
-3. Include it at the end of your sway config and restart sway:
+Your keys for moving windows keep working and now follow the layout:
+while swaytiles runs, it rebinds the keys your config gives to sway's
+`move`. Your config file is never edited, the keys are sway's own again
+when swaytiles stops, and `exec ~/.local/bin/swaytiles --no-keys` turns
+this off.
 
-   ```
-   include ~/.config/sway/swaytiles.conf
-   ```
+## Uninstall
 
-   Nothing else in your config is changed. The bindings in this file
-   replace earlier bindings for the same keys, which sway accepts
-   silently.
-
-The menu uses the first of fuzzel, rofi, wofi, tofi, bemenu, wmenu and
-dmenu that is installed. fuzzel and rofi also show a picture of each
-layout. Any other dmenu-style program works too:
-`swaytiles menu --launcher "walker --dmenu"`.
-
-Errors go to the journal: `journalctl --user -u swaytiles`.
+Remove the three lines, restart sway, and run `uv tool uninstall swaytiles`.
 
 ## Commands
 
 ```sh
-swaytiles            # run the daemon
-swaytiles menu       # pick a layout for the focused workspace
-swaytiles grid       # set a layout for the focused workspace
-swaytiles config     # print the sway bindings
+swaytiles                 # run the daemon
+swaytiles menu            # pick a layout for the focused workspace
+swaytiles grid            # set a layout for the focused workspace
+swaytiles swap            # swap the focused window with the master
+swaytiles move left       # move the focused window: left, right, up, down
+swaytiles move number 3   # send the focused window to a workspace
+swaytiles config          # print lines for the sway config
 ```
 
-`nop layout move left|right|up|down` swaps the focused window with its
+`swaytiles move left|right|up|down` swaps the focused window with its
 neighbour in that direction, so the layout always stays whole. Inside
 tabs it reorders the tabs first. At the edge of the workspace it moves
 the window to the next output. On a workspace without a layout it is
-sway's own `move`. `nop layout move number N` sends the window to a
+sway's own `move`. `swaytiles move number N` sends the window to a
 workspace, where it joins the stack or floats, as that workspace's
-layout says. `nop layout master` swaps the focused window with the
+layout says. `swaytiles swap` swaps the focused window with the
 master; on the master itself it swaps with the top of the stack. Sizes
 stay where they are.
 
-## Uninstall
+Bindings inside a `mode` block are not taken over, and neither is a
+binding that does more than move (`move left; focus left`). For those,
+bind `exec swaytiles move left` yourself, or `nop layout move left`,
+which the daemon reads from sway's binding events without a process
+being started. `nop layout master` is the same for `swaytiles swap`.
 
-Remove the `include` line from your sway config first, because the
-bindings in it do nothing without the daemon. Then:
+## Details
 
-```sh
-systemctl --user disable --now swaytiles.service
-rm ~/.config/systemd/user/swaytiles.service ~/.config/sway/swaytiles.conf
-uv tool uninstall swaytiles
-```
+- **Move keys.** swaytiles reads your sway config and, while it runs,
+  takes over the keys bound to sway's own `move left`, `move right`,
+  `move up`, `move down` and `move container to workspace …`. Your
+  config is never edited, and when swaytiles stops the keys are sway's
+  own moves again. `swaytiles --no-keys` leaves them alone.
+- **Menu program.** The menu uses the first of fuzzel, rofi, wofi, tofi,
+  bemenu, wmenu and dmenu that is installed. fuzzel and rofi also show a
+  picture of each layout. Any other dmenu-style program works too:
+  `swaytiles menu --launcher "walker --dmenu"`.
+- **systemd.** To have the daemon restarted if it fails, copy
+  `contrib/swaytiles.service` to `~/.config/systemd/user/` and replace
+  the `exec` line with
+  `exec systemctl --user import-environment SWAYSOCK && systemctl --user restart swaytiles.service`.
+  Errors then go to the journal: `journalctl --user -u swaytiles`.
 
 ## Files
 

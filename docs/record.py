@@ -186,6 +186,6 @@ def menu():
 
 
 if __name__ == "__main__":
-    wanted = sys.argv[1:] or ["tour", "menu", *(name for name in swaytiles.LAYOUTS if name != "sway")]
+    wanted = sys.argv[1:] or ["tour", "menu", *(name for name in swaytiles.LAYOUTS if name != "default")]
     for name in wanted:
         tour() if name == "tour" else menu() if name == "menu" else layout_demo(name)

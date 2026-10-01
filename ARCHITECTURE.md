@@ -11,21 +11,32 @@ sway ──events──▶ Daemon.handle ──▶ arrange ──▶ one IPC com
   └── tick "layout grid" ── swaytiles grid / swaytiles menu
 ```
 
-- **The daemon** (`swaytiles` with no arguments) runs as a user service.
+- **The daemon** (`swaytiles` with no arguments) runs for the whole sway session.
   It subscribes to sway's window, workspace, output, binding, tick and
   shutdown events and reacts to each one in turn, on a single thread.
-- **The command line** (`swaytiles menu`, `swaytiles LAYOUT`) never
-  touches windows. It sends sway a tick with the payload `layout NAME`,
+- **The command line** (`swaytiles menu`, `swaytiles LAYOUT`, `swaytiles
+  swap`, `swaytiles move`) never touches windows. It sends sway a tick with the payload `layout NAME`,
   sway passes it to every subscriber, and the daemon applies it. The
   daemon stays the only process that changes the tree.
 - **`Sway`** is a small client for sway's IPC protocol over the UNIX
   socket, with no dependencies. Reading the tree this way takes about
   0.2 ms, against 2.6 ms for a `swaymsg` process.
-- **Keys** reach the daemon as `nop` bindings. sway runs `nop layout move
-  left` as a no-op and reports it in a binding event, which the daemon
-  reads and carries out. The daemon never edits the user's config and
-  never binds keys at runtime; `swaytiles config` only prints a file the
-  user includes.
+- **Keys** are the user's own bindings. `exec swaytiles swap` sends a
+  tick with the payload `layout:act master`. A binding can also say `nop
+  layout move left`: sway runs it as a no-op and reports it in a binding
+  event, which the daemon reads and carries out without a process being
+  started.
+- **Move keys** are taken over at runtime. `Daemon.adopt` reads the
+  config sway loaded (`get_config` for the main file, the files it
+  includes from disk), keeps the last binding for each key outside modes,
+  and for those that are exactly sway's own `move DIRECTION` or `move
+  container to workspace X` sends `bindsym KEYS nop layout move …` with
+  the flags the config gave. A runtime `bindsym` replaces the config's
+  binding and lasts until sway reloads, so `adopt` runs again on the
+  reload event, and `give_back` binds the original commands when the
+  daemon stops. A move key the reader missed is taken over the first
+  time it is used, from its binding event. The config file is never
+  edited.
 
 Only one daemon runs per sway session: it holds an `flock` on
 `$XDG_RUNTIME_DIR/swaytiles.<socket>.lock` and exits with code 2 if
@@ -41,7 +52,7 @@ master([7, 8, 9])  ==  ("splith", [7, ("splitv", [8, 9])])
 
 A tree is either a window id or a `(layout, children)` pair, where the
 layout is `splith`, `splitv`, `tabbed`, `stacked` or `float`. `LAYOUTS`
-maps each name to its function, and `None` for `sway`, which leaves the
+maps each name to its function, and `None` for `default`, which leaves the
 workspace alone.
 
 sway's own tree is read into the same form with `shape()`. A few helpers

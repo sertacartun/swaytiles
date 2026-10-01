@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import contextlib
 import fcntl
+import glob
 import json
 import math
 import os
@@ -24,6 +25,8 @@ MARK = "_layout"
 FLOATED = "_layout_floated"
 AFTER = "_layout_after_"
 SYNC = "layout:sync"
+ACT = "layout:act"
+RENAMED = {"sway": "default"}
 CASCADE = 40
 STEPS = 5
 TABBED = ("tabbed", "stacked")
@@ -32,12 +35,14 @@ PARALLEL = {"left": ("splith", "tabbed"), "right": ("splith", "tabbed"), "up": (
 EVENTS = {0: "workspace", 1: "output", 3: "window", 5: "binding", 6: "shutdown", 7: "tick"}
 SUBSCRIPTIONS = ["window", "tick", "workspace", "binding", "output", "shutdown"]
 FOCUSING = re.compile(r"focus (left|right|up|down)")
+MOVING = re.compile(r"move (left|right|up|down)|move (?:container |window )?(?:to )?workspace (number \d+|[^\s\"']+)")
+ELSEWHERE = ("next", "prev", "next_on_output", "prev_on_output", "back_and_forth", "current", "number")
 RESHAPING = re.compile(r"(?:^|[;,\]])\s*(?:split[hvt]?|layout)\b")
 
 
 class Sway:
     MAGIC = b"i3-ipc"
-    COMMAND, WORKSPACES, TREE, TICK, SUBSCRIBE = 0, 1, 4, 10, 2
+    COMMAND, WORKSPACES, TREE, TICK, SUBSCRIBE, CONFIG, MODE = 0, 1, 4, 10, 2, 9, 12
 
     def __init__(self, path=None, timeout=None):
         self.given = path
@@ -133,6 +138,89 @@ def discover():
     return max(found)[1] if found else None
 
 
+def config_path(socket_path):
+    """The config file the sway behind `socket_path` was started with."""
+    home = Path.home()
+    settings = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+    try:
+        pid = Path(socket_path).name.split(".")[2]
+        arguments = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace").split("\0")
+        for index, argument in enumerate(arguments):
+            given = argument.partition("=")[2] if argument.startswith("--config=") else None
+            if argument in ("-c", "--config") and index + 1 < len(arguments):
+                given = arguments[index + 1]
+            if given:
+                return Path(os.readlink(f"/proc/{pid}/cwd")) / given
+    except (OSError, IndexError):
+        pass
+    places = (home / ".sway/config", settings / "sway/config", home / ".i3/config", settings / "i3/config",
+              Path("/etc/sway/config"), Path("/etc/i3/config"))
+    return next((path for path in places if path.is_file()), None)
+
+
+def bindings(text, directory, variables=None, seen=None):
+    """The key bindings of a sway config outside modes, as (words before the
+    command, command), in the order sway reads them. Includes are followed."""
+    variables = {} if variables is None else variables
+    seen = set() if seen is None else seen
+    found, block, depth = [], None, 0
+    for line in text.replace("\\\n", "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        words = line.split()
+        if words[0] == "set" and len(words) > 2 and words[1].startswith("$") and not depth:
+            line = f"set {words[1]} {replaced(line.split(None, 2)[2], variables)}"
+            variables[words[1]] = line.split(None, 2)[2]
+            continue
+        line = replaced(line, variables)
+        words = line.split()
+        if depth:
+            depth += (words[-1] == "{") - (line == "}")
+            if block is not None and depth == 1 and line != "}" and words[-1] != "{":
+                found.append(bound([*block, *words]))
+        elif words[-1] == "{":
+            depth, block = 1, words[:-1] if words[0] in ("bindsym", "bindcode") else None
+        elif words[0] in ("bindsym", "bindcode"):
+            found.append(bound(words))
+        elif words[0] == "include" and len(words) > 1:
+            pattern = os.path.expandvars(os.path.expanduser(line.split(None, 1)[1]))
+            for name in sorted(glob.glob(os.path.join(directory, pattern))):
+                path = Path(name).resolve()
+                if path in seen or not path.is_file():
+                    continue
+                seen.add(path)
+                with contextlib.suppress(OSError, UnicodeDecodeError):
+                    found += bindings(path.read_text(), path.parent, variables, seen)
+    return [binding for binding in found if binding]
+
+
+def replaced(line, variables):
+    for name in sorted(variables, key=len, reverse=True):
+        line = line.replace(name, variables[name])
+    return line
+
+
+def bound(words):
+    keys = next((index for index, word in enumerate(words) if index and not word.startswith("--")), None)
+    if keys is None or keys + 1 >= len(words):
+        return None
+    return " ".join(words[:keys + 1]), " ".join(words[keys + 1:])
+
+
+def same_keys(prefix):
+    kind, *flags, keys = prefix.split()
+    return kind, frozenset(flags), frozenset(keys.lower().split("+"))
+
+
+def following(command):
+    """`nop layout move …` for a binding that is sway's own move, else None."""
+    match = MOVING.fullmatch(" ".join(command.split()))
+    if match is None or match[2] in ELSEWHERE:
+        return None
+    return f"nop layout move {match[1] or match[2]}"
+
+
 def flat(layout):
     return lambda ids: (layout, ids)
 
@@ -167,7 +255,7 @@ def grid(ids):
 
 
 LAYOUTS = {
-    "sway": None,
+    "default": None,
     "tabbed": flat("tabbed"),
     "stacking": flat("stacked"),
     "master": tile("splith", "splitv"),
@@ -182,7 +270,7 @@ LAYOUTS = {
     "float": flat("float"),
 }
 DESCRIPTIONS = {
-    "sway": "Script off, plain sway behaviour",
+    "default": "Left to sway, no layout",
     "tabbed": "Tabs, one window visible",
     "stacking": "Stacked titles, one window visible",
     "master": "Master left, stack right",
@@ -590,6 +678,7 @@ def floater(workspace, node, direction):
 
 
 def known(value, choices, default):
+    value = RENAMED.get(value, value) if isinstance(value, str) else value
     return value if isinstance(value, str) and value in choices else default
 
 
@@ -600,8 +689,8 @@ def load_state():
         saved = {}
     saved = saved if isinstance(saved, dict) else {}
     chosen = saved.get("workspaces") if isinstance(saved.get("workspaces"), dict) else {}
-    return {"layout": known(saved.get("layout"), LAYOUTS, "sway"),
-            "workspaces": {name: layout for name, layout in chosen.items() if known(layout, LAYOUTS, None)}}
+    return {"layout": known(saved.get("layout"), LAYOUTS, "default"),
+            "workspaces": {name: known(layout, LAYOUTS, None) for name, layout in chosen.items() if known(layout, LAYOUTS, None)}}
 
 
 def save_state(state, path=None):
@@ -640,8 +729,10 @@ def load_session(path):
 
 
 class Daemon:
-    def __init__(self, sway):
+    def __init__(self, sway, keys=True):
         self.sway = sway
+        self.keys = keys
+        self.adopted = {}
         self.state = load_state()
         self.order = []
         self.rules = {}
@@ -803,7 +894,7 @@ class Daemon:
         held = marked(tree, AFTER)
         wanted, commands = {}, []
         for ws in workspaces(tree):
-            active = self.chosen(ws["name"]) not in ("sway", "float") and ws["name"] not in self.paused
+            active = self.chosen(ws["name"]) not in ("default", "float") and ws["name"] not in self.paused
             commands += self.tile_rule(ws["name"], active)
             ids = self.ordered(tiles[ws["id"]])
             if active and ids:
@@ -1052,7 +1143,7 @@ class Daemon:
             floated = [node["id"] for node in workspace["floating_nodes"] if f"{FLOATED}{node['id']}" in node["marks"]]
             self.slots.pop(name, None)
             self.sway.command(*(f"[con_id={con}] unmark {FLOATED}{con}, floating disable" for con in floated), *self.float_rule(name, None))
-        if choice == "sway":
+        if choice == "default":
             workspace = next(ws for ws in workspaces(self.sway.tree()) if ws["name"] == name)
             self.sway.command(*(f"[con_id={con}] layout splith" for con in descendants(workspace)))
         self.arrange()
@@ -1087,17 +1178,19 @@ class Daemon:
                 self.syncing = None
             elif payload.startswith("layout ") and payload[7:] in LAYOUTS:
                 self.choose(payload[7:])
+            elif payload.startswith(f"{ACT} "):
+                self.act(payload[len(ACT) + 1:])
         elif kind == "binding":
             command, refocused, self.refocused = event["binding"].get("command", ""), self.refocused, False
             if focusing := FOCUSING.fullmatch(command):
                 self.escape(focusing[1], refocused)
-            elif command == "nop layout master":
-                self.promote()
-            elif command.startswith("nop layout move "):
-                argument = command.split(maxsplit=3)[3]
-                self.move_to(direction=argument) if argument in PARALLEL else self.move_to(target=argument)
+            elif command.startswith("nop layout "):
+                self.act(command[11:])
             elif RESHAPING.search(command):
                 self.arrange()
+            elif following(command):
+                self.learn(event["binding"], command)
+                self.measure_all(self.sway.tree())
             else:
                 self.measure_all(self.sway.tree())
         elif kind == "output":
@@ -1111,6 +1204,8 @@ class Daemon:
             if change == "reload":
                 self.rules.clear()
                 self.anchored.clear()
+                self.adopted.clear()
+                self.adopt()
             self.arrange()
         elif kind == "window" and change == "focus":
             self.focus, self.refocused = [self.focus[1], event["container"]["id"]], True
@@ -1130,9 +1225,45 @@ class Daemon:
                     self.order.append(con)
             self.arrange(con, moved=change == "move")
 
+    def adopt(self):
+        """Put the layout's moves on the keys that the config binds to sway's
+        own `move`. Bindings made at runtime last until sway reloads."""
+        self.give_back(self.sway)
+        if not self.keys:
+            return
+        latest = {}
+        with contextlib.suppress(OSError, KeyError, TypeError, ValueError):
+            path = config_path(self.sway.path)
+            for prefix, command in bindings(self.sway.request(Sway.CONFIG)["config"], path.parent if path else Path.home()):
+                latest[same_keys(prefix)] = (prefix, command)
+        self.adopted = {keys: binding for keys, binding in latest.items() if following(binding[1])}
+        self.sway.command(*(f"{prefix} {following(command)}" for prefix, command in self.adopted.values()))
+
+    def learn(self, binding, command):
+        """A move key the config reader missed: take it over once it is used."""
+        if not self.keys or binding.get("input_type") != "keyboard" or not binding.get("symbol"):
+            return
+        prefix = "bindsym " + "+".join([*binding.get("event_state_mask", []), binding["symbol"]])
+        if same_keys(prefix) in self.adopted or self.sway.request(Sway.MODE).get("name") != "default":
+            return
+        self.adopted[same_keys(prefix)] = (prefix, command)
+        self.sway.command(f"{prefix} {following(command)}")
+
+    def give_back(self, sway):
+        adopted, self.adopted = self.adopted, {}
+        sway.command(*(f"{prefix} {command}" for prefix, command in adopted.values()))
+
+    def act(self, action):
+        if action == "master":
+            self.promote()
+        elif action.startswith("move ") and action[5:].strip():
+            argument = action[5:].strip()
+            self.move_to(direction=argument) if argument in PARALLEL else self.move_to(target=argument)
+
     def run(self):
         events = self.sway.subscribe(SUBSCRIPTIONS)
         self.restore(self.sway)
+        self.adopt()
         self.arrange()
         for kind, event in events:
             if kind == "shutdown":
@@ -1164,7 +1295,7 @@ def stop(*_):
     raise SystemExit(0)
 
 
-def main():
+def main(keys=True):
     sway = Sway()
     try:
         lock = claim(sway)
@@ -1176,7 +1307,7 @@ def main():
         return 2
     for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(number, stop)
-    daemon, alive = Daemon(sway), True
+    daemon, alive = Daemon(sway, keys), True
     try:
         alive = daemon.run()
     except ConnectionError:
@@ -1184,7 +1315,9 @@ def main():
     finally:
         if alive:
             with contextlib.suppress(OSError, ValueError):
-                daemon.restore(Sway(sway.path, timeout=2))
+                closing = Sway(sway.path, timeout=2)
+                daemon.restore(closing)
+                daemon.give_back(closing)
         lock.close()
     return 0
 
@@ -1222,45 +1355,32 @@ def icon(name, tree, highlight):
 
 
 def select(sway, choice):
+    choice = RENAMED.get(choice, choice)
     if choice in LAYOUTS:
         sway.tick(f"layout {choice}")
 
 
+def act(sway, action):
+    sway.tick(f"{ACT} {action}")
+    return 0
+
+
 LAUNCHERS = ("fuzzel", "rofi", "wofi", "tofi", "bemenu", "wmenu", "dmenu")
 CONFIG = """\
-# Generated by `swaytiles config`. Include this file at the end of your sway
-# config so that these bindings replace any earlier ones for the same keys.
+# Lines for your sway config, printed by `swaytiles config`. Pick your own keys.
 
-# Start the daemon with the session. The user service restarts it if it fails.
-exec systemctl --user import-environment SWAYSOCK && systemctl --user restart swaytiles.service
-# Without systemd, use this line instead:
-# exec {command}
+# Start the daemon with the session.
+exec {command}
 
 # Pick a layout for the focused workspace.
 bindsym $mod+Shift+t exec {command} menu
 
 # Swap the focused window with the master.
-bindsym $mod+m nop layout master
+bindsym $mod+m exec {command} swap
 
-# Moves that follow the layout. They replace sway's own move bindings.
-bindsym $mod+Shift+h nop layout move left
-bindsym $mod+Shift+j nop layout move down
-bindsym $mod+Shift+k nop layout move up
-bindsym $mod+Shift+l nop layout move right
-bindsym $mod+Shift+Left nop layout move left
-bindsym $mod+Shift+Down nop layout move down
-bindsym $mod+Shift+Up nop layout move up
-bindsym $mod+Shift+Right nop layout move right
-bindsym $mod+Shift+1 nop layout move number 1
-bindsym $mod+Shift+2 nop layout move number 2
-bindsym $mod+Shift+3 nop layout move number 3
-bindsym $mod+Shift+4 nop layout move number 4
-bindsym $mod+Shift+5 nop layout move number 5
-bindsym $mod+Shift+6 nop layout move number 6
-bindsym $mod+Shift+7 nop layout move number 7
-bindsym $mod+Shift+8 nop layout move number 8
-bindsym $mod+Shift+9 nop layout move number 9
-bindsym $mod+Shift+0 nop layout move number 10
+# The keys that move windows need no lines here: the daemon takes over the
+# bindings for `move left` and `move container to workspace number 1` and
+# their like while it runs.
 """
 
 
@@ -1335,18 +1455,23 @@ def config():
 def cli():
     arguments = sys.argv[1:]
     try:
-        if not arguments:
-            return main()
+        if arguments in ([], ["--no-keys"]):
+            return main(keys=not arguments)
         if arguments[0] == "menu" and len(arguments) in (1, 3) and arguments[1:2] in ([], ["--launcher"]):
             return menu(Sway(), arguments[2] if len(arguments) == 3 else None)
         if arguments == ["config"]:
             return config()
-        if len(arguments) == 1 and arguments[0] in LAYOUTS:
+        if arguments == ["swap"]:
+            return act(Sway(), "master")
+        if arguments[0] == "move" and (arguments[1:] in ([name] for name in PARALLEL) or (arguments[1:2] == ["number"] and len(arguments) == 3)):
+            return act(Sway(), " ".join(arguments))
+        if len(arguments) == 1 and RENAMED.get(arguments[0], arguments[0]) in LAYOUTS:
             return select(Sway(), arguments[0])
     except ConnectionError as error:
         print(f"swaytiles: {error}", file=sys.stderr)
         return 1
-    print(f"usage: swaytiles [menu [--launcher COMMAND] | config | LAYOUT]\nlayouts: {', '.join(LAYOUTS)}", file=sys.stderr)
+    usage = "usage: swaytiles [--no-keys | menu [--launcher COMMAND] | swap | move DIRECTION | move number N | config | LAYOUT]"
+    print(f"{usage}\nlayouts: {', '.join(LAYOUTS)}", file=sys.stderr)
     return 2
 
 

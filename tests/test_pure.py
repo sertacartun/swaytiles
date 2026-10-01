@@ -105,8 +105,10 @@ def test_the_shipped_config_is_the_generated_one():
 def test_state_is_validated(tmp_path, monkeypatch):
     monkeypatch.setattr(sl, "STATE", tmp_path / "state.json")
     (tmp_path / "state.json").write_text(json.dumps({"layout": 3, "workspaces": {"1": "grid", "2": "nope", "3": None}}))
-    assert sl.load_state()["layout"] == "sway"
+    assert sl.load_state()["layout"] == "default"
     assert sl.load_state()["workspaces"] == {"1": "grid"}
+    (tmp_path / "state.json").write_text(json.dumps({"layout": "sway", "workspaces": {"1": "sway"}}))
+    assert sl.load_state() == {"layout": "default", "workspaces": {"1": "default"}}
     sl.save_state({"layout": "grid", "workspaces": {}})
     assert json.loads((tmp_path / "state.json").read_text())["layout"] == "grid"
     assert list(tmp_path.iterdir()) == [tmp_path / "state.json"]
