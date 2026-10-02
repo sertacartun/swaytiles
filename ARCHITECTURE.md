@@ -215,7 +215,12 @@ layout:
    container`, which keeps the sizes.
 3. At the edge, `neighbour` finds the workspace on the next output and
    the window moves there by name. It is recorded as `carried`, so it
-   joins the end of the stack there instead of keeping a drop point.
+   does not keep a drop point. If the layout gives the edge it comes in
+   through to the master alone (`facing`), it becomes the master, as
+   sway's own `move` enters at the near edge: moving right into
+   `master` makes it the master. Otherwise, and on a move to a
+   workspace by name or number, it joins the end of the stack. A move
+   in a direction takes the focus along, like sway's own.
 
 `nop layout master` is the same swap, with the master. On workspaces
 without a layout, a move is sway's own, except that `crosses` predicts
