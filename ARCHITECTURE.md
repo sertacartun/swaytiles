@@ -218,7 +218,8 @@ layout:
 2. `exchange` swaps the two in the order and with sway's `swap
    container`, which keeps the sizes.
 3. At the edge, `neighbour` finds the workspace on the next output and
-   the window moves there by name. It is recorded as `carried`, so it
+   the window moves there by name. It is recorded as `carried`, until the
+   next look at the tree, so it
    does not keep a drop point. If the layout gives the edge it comes in
    through to the master alone (`facing`), it becomes the master, as
    sway's own `move` enters at the near edge: moving right into

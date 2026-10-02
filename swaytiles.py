@@ -760,8 +760,7 @@ class Daemon:
         self.areas = {}
         self.tiled = set()
         self.ratios = {}
-        self.carried = None
-        self.heading = None
+        self.carried = (None, None, None)
         self.focus = [None, None]
         self.refocused = False
         self.session = runtime_path(sway, "json")
@@ -977,17 +976,17 @@ class Daemon:
     def placed(self, tree, new, moved):
         where = {node["id"]: ws["name"] for ws in workspaces(tree) for node in windows(ws)}
         local = moved and new in where and self.where.get(new) == where[new]
-        landed = self.carried in where and self.where.get(self.carried) != where[self.carried]
+        (carried, name, heading), self.carried = self.carried, (None, None, None)
+        landed = where.get(carried) == name and self.where.get(carried) != name
         self.where = where
         self.names = {ws["id"]: ws["name"] for ws in workspaces(tree)}
         if landed:
-            name = where[self.carried]
-            ids = self.ordered(con for ws in workspaces(tree) if ws["name"] == name for con in tiled(ws) if con != self.carried)
+            ids = self.ordered(con for ws in workspaces(tree) if ws["name"] == name for con in tiled(ws) if con != carried)
             layout = self.tiling(name)
-            leads = bool(ids and layout and self.heading) and facing(normalize(layout([self.carried, *ids])), self.heading) == [self.carried]
-            self.order[:] = [con for con in self.order if con != self.carried]
-            self.order.insert(self.order.index(ids[0]) if leads else len(self.order), self.carried)
-            self.carried = self.heading = None
+            leads = bool(ids and layout and heading) and facing(normalize(layout([carried, *ids])), heading) == [carried]
+            self.order[:] = [con for con in self.order if con != carried]
+            self.order.insert(self.order.index(ids[0]) if leads else len(self.order), carried)
+        if landed and new == carried:
             return False, None
         if local and self.syncing is not None:
             return True, None
@@ -1101,9 +1100,8 @@ class Daemon:
             destination = resolve(tree, target)
         if destination is None or destination["id"] == source["id"]:
             return self.sway.command(f"[con_id={con}] {native}")
-        self.carried = con
-        self.heading = direction
         name, area = destination["name"], destination["rect"]
+        self.carried = (con, name, direction)
         command = native if target else f"move container to workspace {quoted(name)}, focus"
         floats = self.state["workspaces"].get(name, self.state["layout"]) == "float"
         if floats and name in visible(tree):
