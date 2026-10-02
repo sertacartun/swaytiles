@@ -38,6 +38,7 @@ swaytiles                 # run the daemon for this sway session
 swaytiles --wait          # run it for every sway session, as the service does
 swaytiles menu --launcher fuzzel   # pick a layout, in the menu program you name
 swaytiles grid            # set a layout for the focused workspace
+swaytiles default grid    # set the layout of workspaces opened from now on
 swaytiles swap            # swap the focused window with the master
 swaytiles move left       # move the focused window: left, right, up, down
 swaytiles move number 3   # send the focused window to a workspace
@@ -53,6 +54,11 @@ workspace, where it joins the stack or floats, as that workspace's
 layout says. `swaytiles swap` swaps the focused window with the
 master; on the master itself it swaps with the top of the stack. Sizes
 stay where they are.
+
+A layout is chosen for one workspace and stays on it. A workspace that
+is opened for the first time gets the layout set with `swaytiles
+default LAYOUT`; until that is used it is left to sway. Workspaces that
+have been open before keep the layout they had.
 
 Bindings inside a `mode` block are not taken over, and neither is a
 binding that does more than move (`move left; focus left`). For those,
@@ -85,7 +91,8 @@ being started. `nop layout master` is the same for `swaytiles swap`.
 
 ## Files
 
-- `~/.local/state/swaytiles.json`: the layout of every workspace.
+- `~/.local/state/swaytiles.json`: the layout of every workspace and
+  the one for new workspaces.
 - `$XDG_RUNTIME_DIR/swaytiles.*`: the lock, the paused workspaces and
   the last arrangement of the running session.
 

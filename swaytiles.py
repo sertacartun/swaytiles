@@ -1153,7 +1153,7 @@ class Daemon:
         self.measure_all(self.sway.tree())
         name = self.sway.focused_workspace()
         previous = self.chosen(name)
-        self.state["layout"] = self.state["workspaces"][name] = choice
+        self.state["workspaces"][name] = choice
         save_state(self.state)
         self.paused.discard(name)
         self.built.pop(name, None)
@@ -1276,6 +1276,9 @@ class Daemon:
     def act(self, action):
         if action == "master":
             self.promote()
+        elif action.startswith("default ") and action[8:] in LAYOUTS:
+            self.state["layout"] = action[8:]
+            save_state(self.state)
         elif action.startswith("move ") and action[5:].strip():
             argument = action[5:].strip()
             self.move_to(direction=argument) if argument in PARALLEL else self.move_to(target=argument)
@@ -1538,10 +1541,13 @@ def cli():
             return act(Sway(), " ".join(arguments))
         if len(arguments) == 1 and RENAMED.get(arguments[0], arguments[0]) in LAYOUTS:
             return select(Sway(), arguments[0])
+        if len(arguments) == 2 and arguments[0] == "default" and RENAMED.get(arguments[1], arguments[1]) in LAYOUTS:
+            return act(Sway(), f"default {RENAMED.get(arguments[1], arguments[1])}")
     except ConnectionError as error:
         print(f"swaytiles: {error}", file=sys.stderr)
         return 1
-    usage = "usage: swaytiles [--wait] [--no-keys] | swaytiles [menu --launcher COMMAND | swap | move DIRECTION | move number N | config | LAYOUT]"
+    usage = ("usage: swaytiles [--wait] [--no-keys] | "
+             "swaytiles [menu --launcher COMMAND | swap | move DIRECTION | move number N | config | LAYOUT | default LAYOUT]")
     print(f"{usage}\nlayouts: {', '.join(LAYOUTS)}", file=sys.stderr)
     return 2
 

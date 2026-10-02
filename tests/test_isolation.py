@@ -39,7 +39,7 @@ def test_a_choice_leaves_seen_workspaces_alone(session):
     assert (s.shape("1"), s.shape("2"), s.shape("4")) == ("H[a1 a2 a3 a4]", "H[b1 V[b2 b3 b4]]", "T[d1 d2 d3]")
 
 
-def test_a_choice_becomes_the_layout_of_workspaces_not_seen_yet(session):
+def test_only_the_default_command_changes_the_layout_of_new_workspaces(session):
     s = session("default")
     s.command("workspace 2")
     s.open("b1")
@@ -48,7 +48,15 @@ def test_a_choice_becomes_the_layout_of_workspaces_not_seen_yet(session):
     s.open("c1")
     s.open("c2")
     s.open("c3")
-    assert s.chosen("3") == "master" and s.shape("3") == "H[c1 V[c2 c3]]"
+    assert s.chosen("3") == "default" and s.shape("3") == "H[c1 c2 c3]"
+    assert s.run("default", "wide").returncode == 0
+    s.settle()
+    assert (s.chosen("2"), s.chosen("3")) == ("master", "default") and s.shape("3") == "H[c1 c2 c3]"
+    s.command("workspace 5")
+    s.open("e1")
+    s.open("e2")
+    assert s.chosen("5") == "wide" and s.shape("5") == "V[e1 e2]"
+    assert s.run("default", "nope").returncode == 2
 
 
 def test_arranging_from_an_old_tree_leaves_the_focus_where_the_user_went(session):
