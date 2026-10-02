@@ -667,6 +667,14 @@ def neighbour(tree, workspace, direction):
     return next((ws for ws in found["nodes"] if ws["name"] == found.get("current_workspace")), None) if found else None
 
 
+def facing(node, direction):
+    if isinstance(node, int):
+        return [node]
+    if node[0] == SPLITS[direction]:
+        return facing(node[1][0 if direction in ("right", "down") else -1], direction)
+    return [leaf for child in node[1] for leaf in facing(child, direction)]
+
+
 def floater(workspace, node, direction):
     axis, sign = (0 if direction in ("left", "right") else 1), (-1 if direction in ("left", "up") else 1)
 
@@ -745,6 +753,7 @@ class Daemon:
         self.tiled = set()
         self.ratios = {}
         self.carried = None
+        self.heading = None
         self.focus = [None, None]
         self.refocused = False
         self.session = runtime_path(sway, "json")
@@ -958,8 +967,18 @@ class Daemon:
     def placed(self, tree, new, moved):
         where = {node["id"]: ws["name"] for ws in workspaces(tree) for node in windows(ws)}
         local = moved and new in where and self.where.get(new) == where[new]
+        landed = self.carried in where and self.where.get(self.carried) != where[self.carried]
         self.where = where
         self.names = {ws["id"]: ws["name"] for ws in workspaces(tree)}
+        if landed:
+            name = where[self.carried]
+            ids = self.ordered(con for ws in workspaces(tree) if ws["name"] == name for con in tiled(ws) if con != self.carried)
+            layout = self.tiling(name)
+            leads = bool(ids and layout and self.heading) and facing(normalize(layout([self.carried, *ids])), self.heading) == [self.carried]
+            self.order[:] = [con for con in self.order if con != self.carried]
+            self.order.insert(self.order.index(ids[0]) if leads else len(self.order), self.carried)
+            self.carried = self.heading = None
+            return False, None
         if local and self.syncing is not None:
             return True, None
         if not moved or local:
@@ -967,9 +986,6 @@ class Daemon:
         if new in self.order:
             self.order.remove(new)
             self.order.append(new)
-        if new == self.carried:
-            self.carried = None
-            return False, None
         return False, new
 
     def release(self, tree, new, moved):
@@ -1076,8 +1092,9 @@ class Daemon:
         if destination is None or destination["id"] == source["id"]:
             return self.sway.command(f"[con_id={con}] {native}")
         self.carried = con
+        self.heading = direction
         name, area = destination["name"], destination["rect"]
-        command = native if target else f"move container to workspace {quoted(name)}"
+        command = native if target else f"move container to workspace {quoted(name)}, focus"
         floats = self.state["workspaces"].get(name, self.state["layout"]) == "float"
         if floats and name in visible(tree):
             taken = {origin(other) for other in destination["floating_nodes"]}

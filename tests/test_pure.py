@@ -131,3 +131,14 @@ def test_the_icons_take_the_colour_of_fuzzels_text(tmp_path, monkeypatch):
     assert sl.fuzzel_text() == "#abcdef"
     config.write_text(f"include={theme}\n[colors]\ntext=nonsense\n")
     assert sl.fuzzel_text() == "#abcdef"
+
+
+def test_the_side_a_move_comes_in_through():
+    def facing(layout, direction):
+        return sl.facing(sl.normalize(sl.LAYOUTS[layout]([1, 2, 3])), direction)
+    assert facing("master", "right") == [1] and facing("master", "left") == [2, 3]
+    assert facing("master-right", "left") == [1] and facing("master-right", "right") == [2, 3]
+    assert facing("wide", "down") == [1] and facing("wide", "right") == [1, 2]
+    assert facing("tabbed-master", "left") == [2, 3]
+    assert facing("centered", "right") == [3]
+    assert sl.facing(sl.normalize(sl.LAYOUTS["master"]([1])), "left") == [1]

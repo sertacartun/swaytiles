@@ -47,7 +47,7 @@ def test_two_outputs(session):
     assert s.shape("10") == "H[a4 S[b2 b3 b1 b4]]"
     s.focus("b2")
     s.key("F2")
-    assert (s.shape("1"), s.shape("10")) == ("H[a1 V[a2 a3 b2]]", "H[a4 S[b3 b1 b4]]")
+    assert (s.shape("1"), s.shape("10")) == ("H[b2 V[a1 a2 a3]]", "H[a4 S[b3 b1 b4]]")
     s.focus("a2")
     s.key("F6")
     s.command("workspace 3")
@@ -67,7 +67,7 @@ def test_two_outputs(session):
     assert s.alive
     s.command("workspace 1")
     s.open("a5")
-    assert s.shape("1") == "H[a1 V[a3 b2 a5]]"
+    assert s.shape("1") == "H[b2 V[a1 a3 a5]]"
     s.command("create_output")
     s.command("workspace 4")
     s.open("d1")
@@ -113,3 +113,27 @@ def test_a_window_carried_to_a_float_workspace_stays_where_it_lands(session):
         time.sleep(0.01)
     assert len(places) == 1, places
     assert s.shape("3") == "- F[c1 b1]" and floats_fit(s, "3")
+
+
+def test_a_window_carried_to_another_output_enters_at_the_near_edge(session):
+    s = session("master", workspaces={"1": "master", "10": "master"}, config=CONFIG, outputs=2)
+    s.command("workspace 1")
+    s.open("a1")
+    s.command("workspace 10")
+    for title in ("b1", "b2", "b3"):
+        s.open(title)
+    assert (s.shape("10"), s.shape("1")) == ("H[b1 V[b2 b3]]", "a1")
+    s.focus("b3")
+    s.key("F2")
+    assert (s.shape("10"), s.shape("1")) == ("H[b1 b2]", "H[b3 a1]")
+    assert s.focused() == "b3"
+    s.key("F1")
+    assert (s.shape("10"), s.shape("1")) == ("H[b1 V[b2 b3]]", "a1")
+    assert s.focused() == "b3"
+    s.key("F1")
+    s.key("F1")
+    assert (s.shape("10"), s.shape("1")) == ("H[b3 V[b2 b1]]", "a1")
+    s.focus("a1")
+    s.key("F1")
+    assert (s.shape("10"), s.shape("1")) == ("H[b3 V[b2 b1 a1]]", "-")
+    assert s.focused() == "a1"
