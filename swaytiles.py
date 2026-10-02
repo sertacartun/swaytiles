@@ -499,6 +499,11 @@ def after(anchor, con):
     return [f"[con_id={anchor}] mark --add {MARK}", f"[con_id={con}] move to mark {MARK}", f"[con_id={anchor}] unmark {MARK}"]
 
 
+def refocus(con):
+    """Focus `con` again, unless the user has gone to another workspace since the tree was read."""
+    return f"[con_id={con} workspace=__focused__] focus"
+
+
 def current(sway, workspace_id):
     return next(ws for ws in workspaces(sway.tree()) if ws["id"] == workspace_id)
 
@@ -518,14 +523,13 @@ def insert(sway, workspace, target, new, focused):
     if (siblings or swapped) and not holders:
         return False
     parked = (siblings or swapped) and focused in leaves(target)
-    commands = [f"[con_id={holders[-1]}] focus"] if parked else []
-    commands += [f"[con_id={new}] swap container with con_id {follower}"] if swapped else []
+    commands = [f"[con_id={new}] swap container with con_id {follower}"] if swapped else []
     if siblings:
         commands += after(anchor, new)
     else:
         commands += [f"[con_id={anchor}] split h", f"[con_id={anchor}] {layout_command(layout)}"]
     commands += [f"[con_id={new}] swap container with con_id {anchor}"] if index == 0 and siblings else []
-    commands += [f"[con_id={focused}] focus"] if parked else []
+    commands += [refocus(focused)] if parked else []
     sway.command(*commands)
     return trimmed(shape(current(sway, workspace["id"]))) == target
 
@@ -582,11 +586,10 @@ def rearrange(sway, workspace, target, focused):
         top = current(sway, workspace["id"])["nodes"]
     root = next(node["id"] for node in top if node["nodes"])
     parked = focused in leaves(target)
-    commands = [f"[con_id={root}] focus"] if parked else []
-    commands.append(f"[con_id={root}] mark --add {MARK}")
+    commands = [f"[con_id={root}] mark --add {MARK}"]
     commands += [f"[con_id={leaf}] move to mark {MARK}" for leaf in leaves(target)]
     commands += [f"[con_id={root}] unmark {MARK}", *build(target)]
-    commands += [f"[con_id={focused}] focus"] if parked else []
+    commands += [refocus(focused)] if parked else []
     sway.command(*commands)
 
 
