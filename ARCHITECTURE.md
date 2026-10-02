@@ -18,7 +18,7 @@ sway ──events──▶ Daemon.handle ──▶ arrange ──▶ one IPC com
   sway, waits for a socket that answers, and after sway ends waits for
   the next one, so nothing in the sway config has to start it.
 - **The command line** (`swaytiles menu`, `swaytiles LAYOUT`, `swaytiles
-  swap`, `swaytiles move`) never touches windows. It sends sway a tick with the payload `layout NAME`,
+  default LAYOUT`, `swaytiles swap`, `swaytiles move`) never touches windows. It sends sway a tick with the payload `layout NAME`,
   sway passes it to every subscriber, and the daemon applies it. The
   daemon stays the only process that changes the tree.
 - **`Sway`** is a small client for sway's IPC protocol over the UNIX
@@ -102,7 +102,8 @@ the tree the user built, if there is one.
 Almost every event ends in `arrange()`, which looks at the whole tree and
 brings every workspace in line:
 
-1. Give unseen workspaces the default layout.
+1. Give unseen workspaces the default layout, which only `swaytiles
+   default LAYOUT` changes. Choosing a layout changes one workspace.
 2. `placed`: note which workspace each window is on, and whether the
    event was a window arriving from another workspace.
 3. `release`: tile again the windows the daemon had floated, on

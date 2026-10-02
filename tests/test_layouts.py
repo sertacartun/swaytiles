@@ -59,7 +59,7 @@ def test_the_menu_choice_is_remembered_per_workspace(session):
     s.command("workspace 2")
     s.open("x1")
     s.open("x2")
-    assert s.shape("2") == "T[x1 x2]"
+    assert s.shape("2") == "H[x1 x2]"
     s.choose("wide")
     assert s.shape("2") == "V[x1 x2]"
     assert s.shape("1") == "T[w1 w2]"
