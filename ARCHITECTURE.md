@@ -131,7 +131,10 @@ the first frame:
   mark, so it opens right after the last window of the stack. The mark
   name is held in a sway variable, `$layout_tile_<hex>`, so the daemon
   switches the rule off by setting the variable to `_layout_off` instead
-  of removing the rule, which sway cannot do.
+  of removing the rule, which sway cannot do. The mark travels with its
+  window, so the rule first takes it off a window that is no longer on
+  the workspace (`elsewhere`): a window moved away while the daemon is
+  busy, stopped or gone does not draw new windows after it.
 - **The gate.** sway runs `for_window` rules again when a window's marks,
   title or app id change, for every window that has not matched them yet.
   A global rule gives each new window a short-lived `_layout_fresh` mark,

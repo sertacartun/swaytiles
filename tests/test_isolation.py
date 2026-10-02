@@ -1,5 +1,10 @@
 """What happens on one workspace stays on it."""
 
+import os
+import signal
+
+import pytest
+
 import swaytiles
 
 
@@ -81,3 +86,30 @@ def test_arranging_from_an_old_tree_leaves_the_focus_where_the_user_went(session
     s.settle()
     assert s.shape("3") == "H[V[c2 c3] c1]"
     assert s.focused() == "c3"
+
+
+@pytest.mark.parametrize("name", ["2", "web dev", "a.b[c]"])
+@pytest.mark.parametrize("number", [signal.SIGKILL, signal.SIGSTOP])
+def test_a_new_window_stays_on_its_workspace_while_the_daemon_is_away(session, name, number):
+    s = session("default", workspaces={"1": "default", name: "master"})
+    s.command("workspace 1")
+    s.open("a1")
+    s.command(f'workspace "{name}"')
+    for title in ("b1", "b2", "b3"):
+        s.open(title)
+    assert s.shape(name) == "H[b1 V[b2 b3]]"
+    os.killpg(s.daemon.pid, number)
+    try:
+        s.command("[title=^b3$] move container to workspace 1")
+        s.command(f'workspace "{name}"')
+        s.open("b4")
+        assert s.shape("1") == "H[a1 b3]"
+        assert "b4" in s.shape(name)
+    finally:
+        if number == signal.SIGSTOP:
+            os.killpg(s.daemon.pid, signal.SIGCONT)
+            s.settle()
+    if number == signal.SIGSTOP:
+        assert (s.shape("1"), s.shape(name)) == ("H[a1 b3]", "H[b1 V[b2 b4]]")
+        s.open("b5")
+        assert s.shape(name) == "H[b1 V[b2 b4 b5]]"

@@ -479,6 +479,11 @@ def criteria(name):
     return re.escape(name).replace('"', '\\"')
 
 
+def elsewhere(name):
+    """A pattern for sway criteria, free of quotes and spaces, that matches the workspaces not called `name`."""
+    return "^(?!" + "".join(letter if letter.isascii() and (letter.isalnum() or letter in "_-") else "." for letter in name) + "$)"
+
+
 def quoted(name):
     return '"' + name.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
@@ -896,7 +901,9 @@ class Daemon:
                                              "[all] mark --add _layout_arm", "unmark _layout_arm", "set $layout_gate _layout_fresh"]
         commands.append(f"set {variable} {AFTER + encoded(name) if active else '_layout_off'}")
         if name not in self.anchored:
-            action = (f"[con_mark=^_layout_fresh$] move container to mark ${variable}; [con_mark=^_layout_fresh$] mark --add ${variable}; "
+            mark = AFTER + encoded(name)
+            action = (f"[con_mark=^{mark}$ workspace={elsewhere(name)}] unmark {mark}; "
+                      f"[con_mark=^_layout_fresh$] move container to mark ${variable}; [con_mark=^_layout_fresh$] mark --add ${variable}; "
                       "[con_mark=^_layout_off$] unmark _layout_off")
             commands.append(f'for_window [workspace="^{criteria(name)}$" tiling] "{action}"')
         self.anchored[name] = active
