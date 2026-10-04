@@ -28,7 +28,6 @@ SYNC = "layout:sync"
 ACT = "layout:act"
 RENAMED = {"sway": "default"}
 CASCADE = 40
-STEPS = 5
 TABBED = ("tabbed", "stacked")
 SPLITS = {"right": "splith", "down": "splitv", "left": "splith", "up": "splitv"}
 PARALLEL = {"left": ("splith", "tabbed"), "right": ("splith", "tabbed"), "up": ("splitv", "stacked"), "down": ("splitv", "stacked")}
@@ -613,9 +612,17 @@ def reorder(order, ids):
     order[:] = [next(slots) if con in wanted else con for con in order]
 
 
+def stairs(area):
+    """The cascade starts two steps above the centre and goes down as far as the output has room."""
+    room = min(area["width"] - area["width"] * 3 // 5, area["height"] - area["height"] * 3 // 5) // 2 // CASCADE
+    above = min(2, room)
+    return above, above + room + 1
+
+
 def cascade(area, slot):
     width, height = area["width"] * 3 // 5, area["height"] * 3 // 5
-    offset = CASCADE * (slot % STEPS - (STEPS - 1) // 2)
+    above, steps = stairs(area)
+    offset = CASCADE * (slot % steps - above)
     return width, height, area["x"] + (area["width"] - width) // 2 + offset, area["y"] + (area["height"] - height) // 2 + offset
 
 
@@ -634,7 +641,8 @@ def fits(node, area):
 
 
 def free_slot(area, taken, start):
-    return next((slot % STEPS for slot in range(start, start + STEPS) if cascade(area, slot % STEPS)[2:] not in taken), start % STEPS)
+    steps = stairs(area)[1]
+    return next((slot % steps for slot in range(start, start + steps) if cascade(area, slot % steps)[2:] not in taken), start % steps)
 
 
 def resolve(tree, target):
@@ -951,7 +959,7 @@ class Daemon:
         commands, hidden = [], []
         for node in fresh + misfits:
             con = node["id"]
-            slot = free_slot(area, taken, start) if node in misfits or origin(node) in taken else start % STEPS
+            slot = free_slot(area, taken, start) if node in misfits or origin(node) in taken else start % stairs(area)[1]
             geometry = cascade(area, slot)
             commands += [f"[con_id={con}] mark --add {FLOATED}{con}", place(con, *geometry)]
             taken.add(geometry[2:])

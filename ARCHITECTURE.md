@@ -235,9 +235,9 @@ workspace.
 
 ## Float workspaces
 
-- Windows are cascaded in five slots around the centre of the output
-  (`cascade`, `free_slot`), and a new window never covers another one
-  exactly.
+- Windows are cascaded from two steps above the centre of the output
+  down as far as it has room (`stairs`, `cascade`, `free_slot`), and a
+  new window never covers another one exactly.
 - Positions on a workspace that is not visible are applied when it is
   shown (`pending`).
 - Windows are refitted when the workspace moves to an output of a

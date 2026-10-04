@@ -23,7 +23,7 @@ def test_windows_cascade_inside_the_output(session):
     assert list(nodes) == [f"w{index}" for index in range(1, 7)]
     assert all(inside(area, node) for node in nodes.values())
     origins = {(node["rect"]["x"], node["rect"]["y"]) for node in nodes.values()}
-    assert len(origins) >= 5
+    assert len(origins) == 6
     assert all(node.get("opacity", 1) == 1 for node in nodes.values())
     sizes = {(node["rect"]["width"], node["rect"]["height"] + node["deco_rect"]["height"]) for node in nodes.values()}
     assert sizes == {(area["width"] * 3 // 5, area["height"] * 3 // 5)}
