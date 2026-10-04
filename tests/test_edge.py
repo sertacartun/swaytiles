@@ -1,6 +1,7 @@
 """The situations that broke other layout daemons."""
 
 import signal
+import threading
 
 import pytest
 
@@ -121,6 +122,66 @@ def test_the_last_window_sent_to_the_scratchpad_does_not_pull_new_ones_in(sessio
     s.command("[title=^w3$] move scratchpad")
     s.open("w4")
     assert s.shape() == "H[w1 V[w2 w4]]"
+
+
+def shapes_during(s, action):
+    seen, done = [s.shape()], threading.Event()
+
+    def watch():
+        while not done.is_set():
+            if (shape := s.shape()) != seen[-1]:
+                seen.append(shape)
+    watcher = threading.Thread(target=watch)
+    watcher.start()
+    action()
+    s.settle()
+    done.set()
+    watcher.join()
+    return seen
+
+
+@pytest.mark.parametrize(("layout", "before", "after"), [
+    ("master", "H[w1 V[w4 w5 w6]]", "H[w1 V[w4 w5 w6 w2]]"),
+    ("grid", "V[H[w1 w4] H[w5 w6]]", "V[H[w1 w4 w5] H[w6 w2]]"),
+    ("centered", "H[w5 w1 V[w4 w6]]", "H[V[w5 w2] w1 V[w4 w6]]"),
+    ("tabbed-master", "H[w1 T[w4 w5 w6]]", "H[w1 T[w4 w5 w6 w2]]"),
+])
+def test_a_hidden_window_comes_back_in_one_step(session, layout, before, after):
+    s = session(layout)
+    opened(s, 4)
+    s.command("[title=^w2$] move scratchpad")
+    s.open("w5")
+    s.close("w3")
+    s.open("w6")
+    s.focus("w1")
+    con = s.node("w2")["id"]
+    assert shapes_during(s, lambda: s.run("show", str(con))) == [before, after]
+    assert s.focused() == "w2"
+
+
+def test_show_brings_back_the_last_hidden_window(session):
+    s = session("master", config="bindsym Mod4+F6 nop layout show\n")
+    opened(s, 4)
+    s.command("[title=^w2$] move scratchpad")
+    s.command("[title=^w4$] move scratchpad")
+    s.key("F6")
+    assert s.shape() == "H[w1 V[w3 w4]]"
+    s.key("F6")
+    assert s.shape() == "H[w1 V[w3 w4 w2]]"
+    s.key("F6")
+    assert s.shape() == "H[w1 V[w3 w4 w2]]"
+
+
+def test_a_hidden_window_comes_back_to_a_float_slot(session):
+    s = session("float")
+    opened(s, 3)
+    s.command("[title=^w2$] move scratchpad")
+    con = s.node("w2")["id"]
+    s.run("show", str(con))
+    s.settle()
+    boxes = [(node["rect"]["x"], node["rect"]["y"]) for node in s.workspace()["floating_nodes"]]
+    assert s.shape() == "- F[w1 w3 w2]"
+    assert len(set(boxes)) == 3
 
 
 def test_the_master_sent_to_another_workspace(session):

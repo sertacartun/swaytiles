@@ -512,10 +512,12 @@ def current(sway, workspace_id):
     return next(ws for ws in workspaces(sway.tree()) if ws["id"] == workspace_id)
 
 
-def insert(sway, workspace, target, new, focused):
+def placing(workspace, target, new, focused):
+    """The commands that take `new` from just after the last window to its
+    place in `target`, when nothing else is out of place."""
     parent = parent_of(target, new)
     if parent is None or trimmed(without(target, new)) != trimmed(without(shape(workspace), new)):
-        return False
+        return None
     layout, children = parent
     index = children.index(new)
     siblings = children[:index] + children[index + 1:]
@@ -525,7 +527,7 @@ def insert(sway, workspace, target, new, focused):
     swapped = isinstance(follower, int)
     holders = [node["id"] for node in ancestors(workspace, anchor)[1:-1]] if isinstance(anchor, int) else []
     if (siblings or swapped) and not holders:
-        return False
+        return None
     parked = (siblings or swapped) and focused in leaves(target)
     commands = [f"[con_id={new}] swap container with con_id {follower}"] if swapped else []
     if siblings:
@@ -533,7 +535,13 @@ def insert(sway, workspace, target, new, focused):
     else:
         commands += [f"[con_id={anchor}] split h", f"[con_id={anchor}] {layout_command(layout)}"]
     commands += [f"[con_id={new}] swap container with con_id {anchor}"] if index == 0 and siblings else []
-    commands += [refocus(focused)] if parked else []
+    return commands + ([refocus(focused)] if parked else [])
+
+
+def insert(sway, workspace, target, new, focused):
+    commands = placing(workspace, target, new, focused)
+    if commands is None:
+        return False
     sway.command(*commands)
     return trimmed(shape(current(sway, workspace["id"]))) == target
 
@@ -584,17 +592,22 @@ def rearrange(sway, workspace, target, focused):
         return sway.command(f"[con_id={target}] layout splith")
     if len(target[1]) == 1:
         return sway.command(f"[con_id={target[1][0]}] {layout_command(target[0])}")
-    top = workspace["nodes"]
-    if all(not node["nodes"] for node in top):
-        sway.command(f"[con_id={top[0]['id']}] split h")
-        top = current(sway, workspace["id"])["nodes"]
-    root = next(node["id"] for node in top if node["nodes"])
-    parked = focused in leaves(target)
+    if all(not node["nodes"] for node in workspace["nodes"]):
+        sway.command(f"[con_id={workspace['nodes'][0]['id']}] split h")
+        workspace = current(sway, workspace["id"])
+    sway.command(*rebuilding(workspace, target, focused))
+
+
+def rebuilding(workspace, target, focused):
+    """The commands that gather the windows in a container of the workspace
+    and build `target` from them, or None if it has no container."""
+    root = next((node["id"] for node in workspace["nodes"] if node["nodes"]), None)
+    if root is None:
+        return None
     commands = [f"[con_id={root}] mark --add {MARK}"]
     commands += [f"[con_id={leaf}] move to mark {MARK}" for leaf in leaves(target)]
     commands += [f"[con_id={root}] unmark {MARK}", *build(target)]
-    commands += [refocus(focused)] if parked else []
-    sway.command(*commands)
+    return commands + ([refocus(focused)] if focused in leaves(target) else [])
 
 
 def conforming(layout, present):
@@ -1127,6 +1140,40 @@ class Daemon:
         else:
             self.sway.command(f"[con_id={con}] {command if managed else native}")
 
+    def unhide(self, con=None):
+        """Bring a window back from the scratchpad, the last one hidden unless
+        `con` says which, to where a new window would open on the focused
+        workspace, in one step so it is not drawn anywhere else first."""
+        tree = self.sway.tree()
+        hidden = [node["id"] for output in tree["nodes"] if output["name"] == "__i3" for ws in output["nodes"] for node in ws["floating_nodes"]]
+        if con is None and hidden:
+            con = hidden[-1]
+        if con not in hidden:
+            return None
+        name = self.sway.focused_workspace()
+        workspace = next(ws for ws in workspaces(tree) if ws["name"] == name)
+        commands = [f"[con_id={con}] scratchpad show"]
+        if self.chosen(name) == "float":
+            area = workspace["rect"]
+            taken = {origin(node) for node in workspace["floating_nodes"]}
+            slot = free_slot(area, taken, self.slots.get(name, 0))
+            geometry = cascade(area, slot)
+            self.slots[name] = free_slot(area, taken | {geometry[2:]}, slot + 1)
+            commands += [f"[con_id={con}] mark --add {FLOATED}{con}, {placement(*geometry)}", *self.float_rule(name, cascade(area, self.slots[name]))]
+        else:
+            commands.append(f"[con_id={con}] floating disable")
+            ids = [c for c in self.ordered(tiled(workspace)) if c != con]
+            if ids and self.tiling(name) is not None and not covered(workspace):
+                self.order[:] = [c for c in self.order if c != con] + [con]
+                target = self.target(name, [*ids, con])
+                steps = placing(workspace, target, con, con) or rebuilding(workspace, target, con) or []
+                commands += after(ids[-1], con) + steps + self.resize(name, target, [*ids, con])
+        self.where[con] = name
+        self.sway.command(*commands, f"[con_id={con}] focus")
+        self.record(self.sway.tree())
+        self.remember()
+        return self.sync()
+
     def escape(self, direction, refocused):
         tree = self.sway.tree()
         node = focused_node(tree)
@@ -1289,6 +1336,8 @@ class Daemon:
     def act(self, action):
         if action == "master":
             self.promote()
+        elif action == "show" or (action.startswith("show ") and action[5:].isdigit()):
+            self.unhide(int(action[5:]) if action[5:] else None)
         elif action.startswith("default ") and action[8:] in LAYOUTS:
             self.state["layout"] = action[8:]
             save_state(self.state)
@@ -1550,6 +1599,8 @@ def cli():
             return config()
         if arguments == ["swap"]:
             return act(Sway(), "master")
+        if arguments[0] == "show" and (len(arguments) == 1 or (len(arguments) == 2 and arguments[1].isdigit())):
+            return act(Sway(), " ".join(arguments))
         if arguments[0] == "move" and (arguments[1:] in ([name] for name in PARALLEL) or (arguments[1:2] == ["number"] and len(arguments) == 3)):
             return act(Sway(), " ".join(arguments))
         if len(arguments) == 1 and RENAMED.get(arguments[0], arguments[0]) in LAYOUTS:
@@ -1560,7 +1611,7 @@ def cli():
         print(f"swaytiles: {error}", file=sys.stderr)
         return 1
     usage = ("usage: swaytiles [--wait] [--no-keys] | "
-             "swaytiles [menu --launcher COMMAND | swap | move DIRECTION | move number N | config | LAYOUT | default LAYOUT]")
+             "swaytiles [menu --launcher COMMAND | swap | show [ID] | move DIRECTION | move number N | config | LAYOUT | default LAYOUT]")
     print(f"{usage}\nlayouts: {', '.join(LAYOUTS)}", file=sys.stderr)
     return 2
 

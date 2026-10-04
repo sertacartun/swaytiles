@@ -227,6 +227,12 @@ layout:
    workspace by name or number, it joins the end of the stack. A move
    in a direction takes the focus along, like sway's own.
 
+`nop layout show` (`swaytiles show`) brings a window back from the
+scratchpad. sway would first tile it next to the focused window, so the
+daemon sends `scratchpad show`, `floating disable`, the move after the
+last window and the steps of `placing` or `rebuilding` as one command,
+and records the result as `built`.
+
 `nop layout master` is the same swap, with the master. On workspaces
 without a layout, a move is sway's own, except that `crosses` predicts
 when sway would send the window to another output and the daemon does

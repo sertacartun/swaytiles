@@ -42,6 +42,8 @@ swaytiles default grid    # set the layout of workspaces opened from now on
 swaytiles swap            # swap the focused window with the master
 swaytiles move left       # move the focused window: left, right, up, down
 swaytiles move number 3   # send the focused window to a workspace
+swaytiles show            # bring the last hidden window back from the scratchpad
+swaytiles show 42         # bring back the hidden window with con_id 42
 swaytiles config          # print lines for the sway config
 ```
 
@@ -57,6 +59,13 @@ layout says. `swaytiles swap` swaps the focused window with the
 master; on the master itself it swaps with the top of the stack. Sizes
 stay where they are.
 
+`swaytiles show` takes a window out of the scratchpad and puts it on
+the focused workspace where a new window would open, tiled into the
+layout, or in the next cascade slot on a float workspace. It is one
+step, so the window is not drawn in sway's own place first. sway's
+`scratchpad show` keeps the window floating; bind `nop layout show`
+instead to get it back into the layout.
+
 A layout is chosen for one workspace and stays on it. A workspace that
 is opened for the first time gets the layout set with `swaytiles
 default LAYOUT`; until that is used it is left to sway. Workspaces that
@@ -66,7 +75,8 @@ Bindings inside a `mode` block are not taken over, and neither is a
 binding that does more than move (`move left; focus left`). For those,
 bind `exec swaytiles move left` yourself, or `nop layout move left`,
 which the daemon reads from sway's binding events without a process
-being started. `nop layout master` is the same for `swaytiles swap`.
+being started. `nop layout master` is the same for `swaytiles swap`, and `nop layout
+show` for `swaytiles show`.
 
 ## Setup
 
