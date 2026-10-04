@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+# Starts swaytiles from ~/.local/lib/swaytiles. Imported as a module, it is
+# compiled once and cached; run as a script, it would be compiled at every
+# start, and the daemon would keep the memory that took.
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.home() / ".local/lib/swaytiles"))
+import swaytiles  # noqa: E402
+
+sys.exit(swaytiles.cli())

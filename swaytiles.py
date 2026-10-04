@@ -6,18 +6,16 @@ import json
 import math
 import os
 import re
-import shlex
-import shutil
 import signal
 import socket
 import struct
-import subprocess
 import sys
-import tempfile
 import threading
 import time
-import traceback
 from pathlib import Path
+
+# shlex, shutil, subprocess, tempfile and traceback are imported where they are
+# used: the daemon itself never needs them, and they cost megabytes.
 
 STATE = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "swaytiles.json"
 ICONS = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "swaytiles"
@@ -739,7 +737,7 @@ def save_state(state, path=None):
 
 
 def runtime_path(sway, suffix):
-    runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
+    runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
     return runtime / f"swaytiles.{Path(sway.path).name}.{suffix}"
 
 
@@ -1358,6 +1356,7 @@ class Daemon:
             except ConnectionError:
                 raise
             except Exception:
+                import traceback
                 traceback.print_exc(file=sys.stderr)
                 sys.stderr.flush()
                 self.recover()
@@ -1519,6 +1518,7 @@ bindsym $mod+m exec {command} swap
 def launcher(custom, count, selected):
     """A known program by its name alone gets the arguments that suit the
     menu; anything longer is the command as given."""
+    import shlex
     words = shlex.split(custom)
     if len(words) != 1 or words[0] not in LAUNCHERS:
         return words, False
@@ -1544,6 +1544,8 @@ def picked_layout(output, names):
 
 
 def warn(message):
+    import shutil
+    import subprocess
     print(f"swaytiles: {message}", file=sys.stderr)
     if shutil.which("notify-send"):
         with contextlib.suppress(OSError, subprocess.SubprocessError):
@@ -1551,6 +1553,8 @@ def warn(message):
 
 
 def menu(sway, custom):
+    import subprocess
+    import tempfile
     state = load_state()
     paused, _, _ = load_session(runtime_path(sway, "json"))
     workspace = sway.focused_workspace()
@@ -1583,6 +1587,7 @@ def menu(sway, custom):
 
 
 def config():
+    import shutil
     found = shutil.which(sys.argv[0]) if Path(sys.argv[0]).name == "swaytiles" else None
     print(CONFIG.format(command=found or "swaytiles"), end="")
     return 0

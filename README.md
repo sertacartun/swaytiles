@@ -17,9 +17,9 @@ https://github.com/user-attachments/assets/06af8569-7a35-4198-a915-d71e2e0efaaf
 ```sh
 git clone https://github.com/sertacartun/swaytiles
 cd swaytiles
-mkdir -p ~/.local/bin ~/.config/systemd/user
-cp swaytiles.py ~/.local/bin/swaytiles
-chmod +x ~/.local/bin/swaytiles
+mkdir -p ~/.local/bin ~/.local/lib/swaytiles ~/.config/systemd/user
+cp swaytiles.py ~/.local/lib/swaytiles/
+cp contrib/swaytiles ~/.local/bin/
 cp contrib/swaytiles.service ~/.config/systemd/user/
 systemctl --user enable --now swaytiles.service
 ```
@@ -42,6 +42,7 @@ focused window with the master.
 ```sh
 systemctl --user disable --now swaytiles.service
 rm ~/.config/systemd/user/swaytiles.service ~/.local/bin/swaytiles
+rm -r ~/.local/lib/swaytiles
 ```
 
 Then remove the two lines from your sway config.

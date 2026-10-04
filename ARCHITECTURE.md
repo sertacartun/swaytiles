@@ -45,6 +45,17 @@ Only one daemon runs per sway session: it holds an `flock` on
 `$XDG_RUNTIME_DIR/swaytiles.<socket>.lock` and exits with code 2 if
 another one has it, which tells the service not to restart it.
 
+## Memory
+
+`~/.local/bin/swaytiles` is a small launcher (`contrib/swaytiles`) that
+imports the module from `~/.local/lib/swaytiles`, so Python compiles it
+once and reuses the cached bytecode. Run directly as a script, the file
+was compiled at every start and the daemon kept about 5 MB from that.
+Modules only the menu, the config command or an error need (`subprocess`,
+`tempfile`, `shutil`, `shlex`, `traceback`) are imported where they are
+used. Together this took the daemon from about 15 MB to about 6 MB of
+its own memory.
+
 ## Layouts are pure functions
 
 A layout is a function from the window order to a tree:
