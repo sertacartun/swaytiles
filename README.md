@@ -5,7 +5,11 @@ and stack, centred master, dwindle, spiral, grid, tabs and floating.
 Anything you arrange by hand wins over the layout.
 
 
-https://github.com/user-attachments/assets/b0c3f7c7-6b3b-4294-8846-ea12e4dd858a
+
+
+https://github.com/user-attachments/assets/06af8569-7a35-4198-a915-d71e2e0efaaf
+
+
 
 
 ## Install
