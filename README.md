@@ -20,6 +20,7 @@ cd swaytiles
 mkdir -p ~/.local/bin ~/.local/lib/swaytiles ~/.config/systemd/user
 cp swaytiles.py ~/.local/lib/swaytiles/
 cp contrib/swaytiles ~/.local/bin/
+python3 -m py_compile ~/.local/lib/swaytiles/swaytiles.py
 cp contrib/swaytiles.service ~/.config/systemd/user/
 systemctl --user enable --now swaytiles.service
 ```

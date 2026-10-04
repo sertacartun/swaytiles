@@ -49,7 +49,7 @@ another one has it, which tells the service not to restart it.
 
 `~/.local/bin/swaytiles` is a small launcher (`contrib/swaytiles`) that
 imports the module from `~/.local/lib/swaytiles`, so Python compiles it
-once and reuses the cached bytecode. Run directly as a script, the file
+once (at install, with `py_compile`) and reuses the cached bytecode. Run directly as a script, the file
 was compiled at every start and the daemon kept about 5 MB from that.
 Modules only the menu, the config command or an error need (`subprocess`,
 `tempfile`, `shutil`, `shlex`, `traceback`) are imported where they are
