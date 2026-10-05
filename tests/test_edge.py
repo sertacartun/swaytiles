@@ -309,3 +309,29 @@ def test_a_resize_without_any_event_is_still_kept(session):
     s.command("[title=^w1$] resize set width 55 ppt")
     s.choose("master")
     assert s.width("w1") == 0.55
+
+
+@pytest.mark.parametrize("layout", ["master", "tabbed", "dwindle"])
+def test_a_stacked_empty_workspace_still_gets_the_layout(session, layout):
+    from harness import expected
+    s = session(layout)
+    s.command("layout stacking")
+    opened(s, 3)
+    assert s.shape() == expected(layout, 3)
+    assert s.workspace()["layout"] == "splith"
+
+
+def test_default_undoes_a_stacked_workspace(session):
+    s = session("default")
+    s.command("layout tabbed")
+    opened(s, 2)
+    assert s.shape() == "T[w1 w2]"
+    s.command("workspace 2")
+    s.choose("default")
+    s.command("workspace 1")
+    assert s.shape() == "T[w1 w2]"
+    s.choose("default")
+    assert s.workspace()["layout"] == "splith"
+    s.open("w3")
+    assert s.shape() == "H[w1 w2 w3]"
+    assert s.focused() == "w3"

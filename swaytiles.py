@@ -284,14 +284,14 @@ DESCRIPTIONS = {
 
 
 def normalize(node):
-    if isinstance(node, int):
+    if isinstance(node, int) or node is None:
         return node
     children = [child for child in map(normalize, node[1]) if child is not None]
     return (node[0], children) if children else None
 
 
 def loose(node):
-    if isinstance(node, int):
+    if isinstance(node, int) or node is None:
         return node
     children = [child for child in map(loose, node[1]) if child is not None]
     if len(children) == 1 and node[0] not in TABBED:
@@ -573,6 +573,21 @@ def relabel(node, target):
         return None
     commands = [] if node["layout"] == layout else [f"[con_id={node['nodes'][0]['id']}] {layout_command(layout)}"]
     return commands + [command for part in found for command in part]
+
+
+def unstacking(workspace, focused):
+    """The commands that turn a tabbed or stacked workspace back into a split one.
+    sway changes the workspace's own layout only while the workspace itself has
+    focus; `layout` on a window right under it wraps the windows in a new
+    container and leaves the workspace as it was."""
+    if workspace["layout"] not in TABBED or covered(workspace):
+        return []
+    if focused["id"] == workspace["id"]:
+        return ["layout splith"]
+    if not workspace["nodes"]:
+        return []
+    back = f"[con_id={focused['id']}] focus" if focused["type"] != "workspace" else f"workspace {quoted(focused['name'])}"
+    return [f"[con_id={workspace['nodes'][0]['id']}] focus", "focus parent", "layout splith", back]
 
 
 def restyle(sway, workspace, target):
@@ -1053,6 +1068,10 @@ class Daemon:
         if skip:
             return self.remember()
         tree = self.release(tree, new, moved and arrived is not None)
+        if unstack := [command for ws in workspaces(tree) if self.tiling(ws["name"]) is not None
+                       for command in unstacking(ws, focused_node(tree))]:
+            self.sway.command(*unstack)
+            tree = self.sway.tree()
         tiles = {ws["id"]: tiled(ws) for ws in workspaces(tree)}
         self.kept = {con: ws["name"] for ws in workspaces(tree) for con in tiles[ws["id"]]
                      if self.kept.get(con) == ws["name"] and self.chosen(ws["name"]) == "float"}
@@ -1222,8 +1241,10 @@ class Daemon:
             self.slots.pop(name, None)
             self.sway.command(*(f"[con_id={con}] unmark {FLOATED}{con}, floating disable" for con in floated), *self.float_rule(name, None))
         if choice == "default":
-            workspace = next(ws for ws in workspaces(self.sway.tree()) if ws["name"] == name)
-            self.sway.command(*(f"[con_id={con}] layout splith" for con in descendants(workspace)))
+            tree = self.sway.tree()
+            workspace = next(ws for ws in workspaces(tree) if ws["name"] == name)
+            self.sway.command(*unstacking(workspace, focused_node(tree)),
+                              *(f"[con_id={con}] layout splith" for con in descendants(workspace)))
         self.arrange()
 
     def rename(self, workspace):
