@@ -339,9 +339,14 @@ file, so `drawn` can count the transactions an action costs.
 
 - When the master closes, sway lays the remaining windows out once before
   the daemon does, so slow clients may show one extra frame.
-- Mouse drags of tiled windows cannot be simulated in headless sway; they
-  go through the same event as keyboard moves, which is tested.
-- A layout broken with `swaymsg` is let go at the next window event
-  rather than at once.
+- sway reports no event for a window dropped on a workspace's edge or
+  swapped with the mouse. Pressing on a window to drag it focuses it, so
+  the daemon looks at the tree for a few seconds after every focus change;
+  a drag of the window that already had the focus is noticed at the next
+  event.
+- Only keys bound to `layout` or `split` let a workspace go. Any other
+  change made by hand (a mouse drag, sway's own `move`, a `swaymsg`
+  command) is taken as a move: the windows keep their new order and the
+  layout is built again.
 - A new floating window takes the next slot in the cascade rather than a
   slot freed by a closed window.

@@ -27,6 +27,10 @@ SYNC = "layout:sync"
 ACT = "layout:act"
 RENAMED = {"sway": "default"}
 CASCADE = 40
+# sway reports no event for a window dropped on a workspace's edge or swapped
+# with the mouse; the daemon looks at the tree this often, for this long after
+# the focus changes, as pressing on a window to drag it focuses it.
+WATCH = (0.2, 4.0)
 TABBED = ("tabbed", "stacked")
 SPLITS = {"right": "splith", "down": "splitv", "left": "splith", "up": "splitv"}
 PARALLEL = {"left": ("splith", "tabbed"), "right": ("splith", "tabbed"), "up": ("splitv", "stacked"), "down": ("splitv", "stacked")}
@@ -111,7 +115,10 @@ class Sway:
     def focused_workspace(self):
         return next(ws["name"] for ws in self.request(self.WORKSPACES) if ws["focused"])
 
-    def subscribe(self, names):
+    def subscribe(self, names, pause=lambda: None):
+        """The events, and an "idle" one each time no event comes for the
+        seconds `pause` returns, when it returns any."""
+        from select import select as readable
         connection = self.connect()
         self.send(connection, self.SUBSCRIBE, json.dumps(names))
         self.receive(connection)
@@ -119,6 +126,10 @@ class Sway:
         def stream():
             with connection:
                 while True:
+                    wait = pause()
+                    if wait is not None and not readable([connection], [], [], wait)[0]:
+                        yield "idle", {}
+                        continue
                     kind, event = self.receive(connection)
                     yield EVENTS.get(kind), event
         return stream()
@@ -702,14 +713,21 @@ def arrived(workspace, con, anchor):
     return copy(workspace)
 
 
-def conforming(layout, present):
+def logical(layout, present):
+    """The windows of `present` in the order that has `layout` put each of
+    them where it is, counting places in the order of the tree."""
     cons = leaves(present) if present is not None else []
     if not cons:
         return None
-    logical = [0] * len(cons)
+    order = [0] * len(cons)
     for position, index in enumerate(leaves(trimmed(layout(list(range(len(cons))))))):
-        logical[index] = cons[position]
-    return logical if outline(layout(logical)) == outline(present) else None
+        order[index] = cons[position]
+    return order
+
+
+def conforming(layout, present):
+    order = logical(layout, present)
+    return order if order and outline(layout(order)) == outline(present) else None
 
 
 def reorder(order, ids):
@@ -953,6 +971,7 @@ class Daemon:
         self.tiled = set()
         self.ratios = {}
         self.sized = {}
+        self.watching = 0.0
         self.carried = (None, None, None)
         self.focus = [None, None]
         self.refocused = False
@@ -987,18 +1006,18 @@ class Daemon:
     def target(self, name, ids):
         return trimmed(self.tiling(name)(ids)) if ids else None
 
-    def inspect(self, workspace, ids, arrived):
+    def inspect(self, workspace, ids, arrived, reshaped=False):
         name, seen = workspace["name"], self.built.get(workspace["name"])
         known = set(leaves(seen)) if seen is not None else set()
         extra = [con for con in ids if con not in known]
         present = without(shape(workspace), *extra)
         before = without(seen, *known.difference(ids)) if seen is not None else None
         if seen is not None and outline(before) != outline(present):
-            self.adapt(workspace, present, bare(trimmed(before)) == bare(trimmed(present)))
+            self.adapt(workspace, present, bare(trimmed(before)) == bare(trimmed(present)), not reshaped)
         elif arrived in ids and (found := conforming(self.tiling(name), shape(workspace))):
             reorder(self.order, found)
 
-    def adapt(self, workspace, present, restyled):
+    def adapt(self, workspace, present, restyled, moved=False):
         name = workspace["name"]
         candidates = [(self.chosen(name), self.tiling(name))]
         if restyled:
@@ -1012,6 +1031,12 @@ class Daemon:
                     self.state["workspaces"][name] = other
                     save_state(self.state)
                 return
+        if moved:
+            # A window dragged with the mouse, moved with sway's own `move` or
+            # changed with swaymsg: the windows take the order they now have,
+            # and the layout is built again.
+            reorder(self.order, logical(self.tiling(name), present))
+            return
         notify(f"Workspace {name} switched to default after a manual change. Pick a layout from the menu to tile it again.")
         self.state["workspaces"][name] = "default"
         save_state(self.state)
@@ -1240,7 +1265,10 @@ class Daemon:
             rearrange(self.sway, current(self.sway, workspace["id"]), target, focused, sized)
         return True
 
-    def arrange(self, new=None, moved=False):
+    def arrange(self, new=None, moved=False, reshaped=False):
+        """Bring every workspace in line with its layout. `reshaped` says that
+        a key bound to `layout` or `split` ran; any other change made by hand
+        is a move, which reorders the windows."""
         tree = self.sway.tree()
         unseen = [ws["name"] for ws in workspaces(tree) if ws["name"] not in self.state["workspaces"]]
         if unseen:
@@ -1262,7 +1290,7 @@ class Daemon:
             if covered(workspace) or self.chosen_tiling(name) is None:
                 continue
             if ids := self.ordered(tiles[workspace["id"]]):
-                self.inspect(workspace, ids, arrived)
+                self.inspect(workspace, ids, arrived, reshaped)
         self.sway.command(*self.anchors(tree, tiles))
         focused, shown, shaped = focused_node(tree)["id"], visible(tree), False
         for workspace in workspaces(tree):
@@ -1458,9 +1486,22 @@ class Daemon:
     def recover(self):
         self.sway.command(*(f"[con_id={con}] opacity 1" for con in invisible(self.sway.tree())))
 
+    def pause(self):
+        left = self.watching - time.monotonic()
+        return min(WATCH[0], left) if left > 0 else None
+
+    def drifted(self, tree):
+        """Whether a workspace the daemon tiles has changed since it last looked."""
+        return any(self.tiling(ws["name"]) is not None and ws["name"] in self.built and not covered(ws)
+                   and trimmed(shape(ws)) != self.built[ws["name"]] for ws in workspaces(tree))
+
     def handle(self, kind, event):
         change = event.get("change")
-        if kind == "tick":
+        if kind == "idle":
+            if self.drifted(self.sway.tree()):
+                self.watching = 0.0
+                self.arrange()
+        elif kind == "tick":
             payload = event.get("payload", "")
             if payload == f"{SYNC} {self.syncing}":
                 self.syncing = None
@@ -1475,12 +1516,14 @@ class Daemon:
             elif command.startswith("nop layout "):
                 self.act(command[11:])
             elif RESHAPING.search(command):
-                self.arrange()
+                self.arrange(reshaped=True)
             elif following(command):
                 self.learn(event["binding"], command)
                 self.measure_all(self.sway.tree())
+            elif self.drifted(tree := self.sway.tree()):
+                self.arrange()
             else:
-                self.measure_all(self.sway.tree())
+                self.measure_all(tree)
         elif kind == "output":
             self.arrange()
         elif kind == "workspace" and change == "focus":
@@ -1492,11 +1535,13 @@ class Daemon:
             if change == "reload":
                 self.rules.clear()
                 self.anchored.clear()
+                self.sized.clear()
                 self.adopted.clear()
                 self.adopt()
             self.arrange()
         elif kind == "window" and change == "focus":
             self.focus, self.refocused = [self.focus[1], event["container"]["id"]], True
+            self.watching = time.monotonic() + WATCH[1]
         elif kind == "window" and change == "fullscreen_mode":
             self.arrange()
         elif kind == "window" and change in ("new", "close", "floating", "move"):
@@ -1554,7 +1599,7 @@ class Daemon:
             self.move_to(direction=argument) if argument in PARALLEL else self.move_to(target=argument)
 
     def run(self):
-        events = self.sway.subscribe(SUBSCRIPTIONS)
+        events = self.sway.subscribe(SUBSCRIPTIONS, self.pause)
         self.restore(self.sway)
         self.adopt()
         self.arrange()

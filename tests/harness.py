@@ -262,6 +262,32 @@ class Session:
         if settle:
             self.settle()
 
+    def title_bar(self, title):
+        """The middle of the window's title bar, in layout coordinates: sway
+        gives a title bar's place relative to the window's parent."""
+        stack = [self.tree()]
+        while stack:
+            node = stack.pop()
+            for child in node["nodes"]:
+                if child.get("name") == title and child["type"] == "con":
+                    deco = child["deco_rect"]
+                    return (node["rect"]["x"] + deco["x"] + deco["width"] // 2,
+                            node["rect"]["y"] + deco["y"] + deco["height"] // 2)
+                stack.append(child)
+        raise LookupError(title)
+
+    def drag(self, title, x, y):
+        """Drag the window by its title bar with the mouse and drop it at x, y."""
+        from pointer import Pointer
+        boxes = [output["rect"] for output in self.tree()["nodes"] if output["name"] != "__i3"]
+        size = max(box["x"] + box["width"] for box in boxes), max(box["y"] + box["height"] for box in boxes)
+        pointer = Pointer(self.env)
+        try:
+            pointer.drag(self.title_bar(title), (x, y), size)
+        finally:
+            pointer.close()
+        self.settle()
+
     def focus(self, title):
         self.command(f"[title=^{title}$] focus")
 
