@@ -72,7 +72,8 @@ class Session:
         self.config = Path(base) / "sway.conf"
         self.config.write_text("default_border normal\nfocus_follows_mouse no\n" + config)
         self.outputs = outputs
-        self.pausing = False
+        self.releasing = False
+        self.layout, self.picked = layout, dict(workspaces or {})
         self.clients = []
         self.daemon = None
         self.sway = None
@@ -203,9 +204,10 @@ class Session:
     def chosen(self, name="1"):
         return json.loads(self.state_file.read_text())["workspaces"].get(name)
 
-    def paused(self):
-        sessions = list(self.base.glob("swaytiles.*.json"))
-        return set(json.loads(sessions[0].read_text()).get("paused", [])) if sessions else set()
+    def released(self):
+        """The workspaces the daemon let go of by itself: switched to default without being picked."""
+        chosen = json.loads(self.state_file.read_text())["workspaces"]
+        return {name for name, layout in chosen.items() if layout == "default" and self.picked.get(name, self.layout) != "default"}
 
     def width(self, title, of="1"):
         node, ws = self.node(title), self.workspace(of)
@@ -253,6 +255,8 @@ class Session:
         self.settle()
 
     def choose(self, layout):
+        focused = next(ws["name"] for ws in json.loads(self.msg("-r", "-t", "get_workspaces")) if ws["focused"])
+        self.picked[focused] = layout
         subprocess.run([sys.executable, str(DAEMON), layout], env=self.env, check=True)
         self.settle()
 

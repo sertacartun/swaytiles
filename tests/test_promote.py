@@ -51,9 +51,9 @@ def test_other_layouts(session, layout, before, after):
     assert s.shape() == after
 
 
-def test_a_paused_workspace_has_no_master(session):
+def test_a_workspace_let_go_has_no_master(session):
     s = started(session, "master")
-    s.pausing = True
+    s.releasing = True
     s.command("[title=^w4$] move left")
     assert s.shape() == "H[w1 w4 V[w2 w3]]"
     s.focus("w2")

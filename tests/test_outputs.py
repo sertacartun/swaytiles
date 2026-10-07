@@ -3,6 +3,8 @@
 import subprocess
 import time
 
+import pytest
+
 CONFIG = ("output HEADLESS-1 resolution 1920x1200 position 0 480 scale 1.25\n"
           "output HEADLESS-2 resolution 2560x1440 position 1536 0\n"
           "workspace 10 output HEADLESS-1\nworkspace 1 output HEADLESS-2\nworkspace 3 output HEADLESS-2\n"
@@ -137,3 +139,81 @@ def test_a_window_carried_to_another_output_enters_at_the_near_edge(session):
     s.key("F1")
     assert (s.shape("10"), s.shape("1")) == ("H[b3 V[b2 b1 a1]]", "-")
     assert s.focused() == "a1"
+
+
+def test_a_window_moved_to_the_next_output_lands_in_its_place(session):
+    s = session("master", workspaces={"1": "tabbed-master", "10": "default"}, config=CONFIG, outputs=2)
+    s.command("workspace 1")
+    s.open("a1")
+    s.command("workspace 10")
+    s.open("b1")
+    s.open("b2")
+    s.key("F2")
+    assert (s.shape("1"), s.shape("10")) == ("H[b2 T[a1]]", "b1")
+    assert s.focused() == "b2"
+    s.key("F1")
+    assert (s.shape("1"), s.shape("10")) == ("a1", "H[b1 b2]")
+    s.focus("b1")
+    s.key("F2")
+    s.key("F2")
+    assert (s.shape("1"), s.shape("10")) == ("H[b1 T[a1]]", "b2")
+
+
+WRAPS = {
+    "flat": "",
+    "wrapped": "[title=^a1$] layout splitv; [title=^a1$] layout splith",
+    "single": "[title=^a1$] split v",
+    "tabbed": "[title=^a1$] layout tabbed",
+    "vertical": "[title=^a1$] layout splitv",
+    "nested": "[title=^a1$] layout splitv; [title=^a1$] layout splith; [title=^a2$] split v; [title=^a1$] move right; [title=^a1$] move left",
+}
+
+
+def wrapped(session, shape):
+    s = session("default", workspaces={"1": "default", "10": "default"}, config=CONFIG, outputs=2)
+    s.command("workspace 10")
+    s.open("b1")
+    s.command("workspace 1")
+    s.open("a1")
+    s.open("a2")
+    if WRAPS[shape]:
+        s.command(WRAPS[shape])
+    s.focus("a1")
+    return s
+
+
+@pytest.mark.parametrize("shape", WRAPS)
+def test_presses_counts_the_moves_sway_needs_to_leave_the_output(session, shape):
+    import swaytiles
+    s = wrapped(session, shape)
+    predicted = swaytiles.presses(s.workspace("1"), s.node("a1")["id"], "left")
+    s.stop_daemon()
+
+    def left():
+        s.command("[title=^a1$] move left")
+        return "a1" in s.shape("10")
+    assert predicted == next(count for count in range(1, 6) if left())
+
+
+def test_a_window_in_a_wrapper_leaves_the_output_in_one_press(session):
+    s = wrapped(session, "wrapped")
+    assert s.shape("1", exact=True) == "H[H[a1 a2]]"
+    s.key("F1")
+    assert (s.shape("1"), s.shape("10")) == ("a2", "H[b1 a1]")
+    assert s.focused() == "a1"
+
+
+def test_a_window_left_alone_in_its_tabs_gets_its_border_back(session):
+    s = session("master", workspaces={"1": "tabbed-master", "10": "default"},
+                config="default_border pixel 5\n" + CONFIG, outputs=2)
+    s.command("workspace 1")
+    s.open("a1")
+    s.command("workspace 10")
+    s.open("b1")
+    s.open("b2")
+    for _ in range(2):
+        s.key("F2")
+        assert s.shape("1") == "H[b2 T[a1]]"
+        s.key("F1")
+        assert s.shape("1") == "a1"
+        assert s.node("a1")["window_rect"]["y"] == 5

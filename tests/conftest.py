@@ -18,7 +18,7 @@ def session(tmp_path):
     yield start
     for instance in started:
         errors = instance.stderr()
-        paused = instance.paused() if instance.env else set()
+        released = instance.released() if instance.env else set()
         instance.stop()
         assert not errors.strip(), f"daemon wrote to stderr:\n{errors}"
-        assert instance.pausing or not paused, f"workspaces paused by mistake: {paused}"
+        assert instance.releasing or not released, f"workspaces let go by mistake: {released}"

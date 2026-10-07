@@ -79,9 +79,9 @@ def test_the_session_is_validated(tmp_path):
     path = tmp_path / "session.json"
     path.write_text(json.dumps({"paused": ["1", 2, None], "built": {"1": ["splith", [1, ["tabbed", [2]]]], "2": ["x", [1]]},
                                 "pinned": {"1": [5]}, "kept": {"7": "3", "x": "3", "8": 4}}))
-    assert sl.load_session(path) == ({"1"}, {"1": ("splith", [1, ("tabbed", [2])])}, {7: "3"})
+    assert sl.load_session(path) == ({"1": ("splith", [1, ("tabbed", [2])])}, {7: "3"})
     path.write_text("[1, 2]")
-    assert sl.load_session(path) == (set(), {}, {})
+    assert sl.load_session(path) == ({}, {})
 
 
 def test_the_menu_understands_every_kind_of_launcher():

@@ -89,7 +89,7 @@ def test_the_keys_go_back_when_the_daemon_stops(session):
     s.focus("w4")
     s.key("F1")
     assert s.shape() == "H[w1 w4 V[w2 w3]]"
-    s.pausing = True
+    s.releasing = True
 
 
 def test_a_later_binding_for_the_same_keys_wins(session):
@@ -111,7 +111,7 @@ def test_no_keys_leaves_the_bindings_alone(session):
     s.focus("w4")
     s.key("F1")
     assert s.shape() == "H[w1 w4 V[w2 w3]]"
-    s.pausing = True
+    s.releasing = True
 
 
 def test_a_key_bound_at_runtime_is_taken_over_once_used(session):

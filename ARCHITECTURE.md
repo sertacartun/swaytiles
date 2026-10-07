@@ -91,7 +91,7 @@ State is split by how long it should live:
 | Where | What | Lifetime |
 | --- | --- | --- |
 | `~/.local/state/swaytiles.json` | the layout of every workspace and the default for new ones | forever |
-| `$XDG_RUNTIME_DIR/swaytiles.<socket>.json` | paused workspaces, the last tree built on each workspace (`built`), windows tiled by hand on float workspaces (`kept`) | this sway session; survives a daemon restart |
+| `$XDG_RUNTIME_DIR/swaytiles.<socket>.json` | the last tree built on each workspace (`built`), windows tiled by hand on float workspaces (`kept`) | this sway session; survives a daemon restart |
 | memory | the window order, master sizes, float slots, focus history | this daemon |
 
 Window ids are only meaningful inside one sway session, which is why
@@ -120,8 +120,7 @@ brings every workspace in line:
 3. `release`: tile again the windows the daemon had floated, on
    workspaces that are no longer float workspaces.
 4. Update the order: drop closed windows, append new ones.
-5. `resume` paused workspaces whose windows fit the layout again, then
-   `inspect` the others for changes made by hand (see below).
+5. `inspect` the workspaces for changes made by hand (see below).
 6. `anchors`: point the placement rules at the last window of each
    workspace (see below).
 7. For each workspace: `float_all` on float workspaces, `shape_up` on
@@ -202,12 +201,9 @@ outlines are the same, nothing was changed by hand. If they differ,
 - Only styles changed (`bare` trees are equal), and the result is another
   layout with the same window order: switch to it. Tabbing the stack of
   `master` gives `tabbed-master`.
-- Anything else: pause the workspace. It is added to `paused`, the tile
-  rule is switched off, and sway places new windows as it normally would.
-
-A paused workspace resumes by itself once `conforming` finds an order for
-its tree again (often after the odd window closes), or when the layout
-is picked from the menu.
+- Anything else: let the workspace go. Its layout becomes `default`, the
+  tile rule is switched off, and sway places new windows as it normally
+  would. Picking a layout from the menu takes it over again.
 
 Bindings whose command contains `split` or `layout` trigger an
 `arrange` at once, since no other event follows them. The same commands
@@ -305,13 +301,13 @@ its own runtime, state and cache directories, the daemon, and small GTK 4
 windows as clients (`tests/client.py`). Keys are typed with `wtype`. The
 tests read the tree and compare shapes such as `H[w1 V[w2 w3]]`; after
 every test, `conftest.py` checks that the daemon logged no error and
-paused no workspace unless the test expected it.
+let no workspace go (switched it to `default`) unless the test expected it.
 
 | File | Covers |
 | --- | --- |
 | `test_pure.py` | the layout arithmetic, without sway |
 | `test_layouts.py` | every layout while windows open, close and switch |
-| `test_manual.py` | changes made by hand, pausing, the menu and the config command |
+| `test_manual.py` | changes made by hand, letting a workspace go, the menu and the config command |
 | `test_promote.py` | swapping with the master |
 | `test_float.py` | float workspaces |
 | `test_outputs.py` | two outputs of different sizes and scales |
@@ -324,8 +320,8 @@ paused no workspace unless the test expected it.
   the daemon does, so slow clients may show one extra frame.
 - Mouse drags of tiled windows cannot be simulated in headless sway; they
   go through the same event as keyboard moves, which is tested.
-- A layout broken with `swaymsg` pauses at the next window event rather
-  than at once.
+- A layout broken with `swaymsg` is let go at the next window event
+  rather than at once.
 - sway cannot remove a redundant wrapper directly under a workspace, so
   such wrappers are left alone.
 - A new floating window takes the next slot in the cascade rather than a

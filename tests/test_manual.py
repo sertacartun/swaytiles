@@ -1,4 +1,4 @@
-"""A layout gives way to changes made by hand and takes over again when they fit it."""
+"""A layout follows changes made by hand that fit it, and lets the workspace go (default) when they do not."""
 
 import signal
 
@@ -60,23 +60,24 @@ def test_layout_moves_in_every_layout_keep_it(session):
             for key in ("F1", "F2", "F3", "F4"):
                 s.focus(title)
                 s.key(key)
-                assert s.chosen() == layout and not s.paused(), (layout, title, key)
+                assert s.chosen() == layout, (layout, title, key)
         moved = s.shape()
         s.choose(layout)
         assert s.shape() == moved, layout
 
 
-def test_a_native_move_that_breaks_the_layout_pauses_it(session):
+def test_a_native_move_that_breaks_the_layout_lets_it_go(session):
     s = opened(session, "master", count=3)
-    s.pausing = True
+    s.releasing = True
     s.command("[title=^w3$] move left")
     assert s.shape() == "H[w1 w3 w2]"
-    assert s.paused() == {"1"} and s.chosen() == "master"
+    assert s.chosen() == "default"
     s.open("w4")
     assert s.shape() == "H[w1 w3 w4 w2]"
     s.close("w3")
     s.close("w4")
-    assert s.paused() == set()
+    assert s.chosen() == "default"
+    s.choose("master")
     s.open("w5")
     assert s.shape() == "H[w1 V[w2 w5]]"
 
@@ -91,17 +92,16 @@ def test_a_native_move_that_fits_the_layout_is_kept(session):
     assert s.shape() == "H[w2 V[w4 w3 w5]]"
 
 
-def test_a_layout_key_pauses_at_once(session):
+def test_a_layout_key_lets_go_at_once(session):
     s = opened(session, "master", count=3)
-    s.pausing = True
+    s.releasing = True
     s.focus("w1")
     s.key("F7")
-    assert s.paused() == {"1"} and s.chosen() == "master"
+    assert s.chosen() == "default"
     before = s.shape()
     s.open("w4")
     assert "w4" in s.shape() and s.shape() != "H[w1 V[w2 w3 w4]]"
     s.choose("master")
-    assert s.paused() == set()
     assert s.shape() == "H[w1 V[w2 w3 w4]]"
     assert before != s.shape()
 
@@ -111,27 +111,27 @@ def test_a_stack_made_tabbed_by_key_becomes_tabbed_master(session):
     s.focus("w3")
     s.key("F5")
     assert s.shape() == "H[w1 T[w2 w3]]"
-    assert s.chosen() == "tabbed-master" and s.paused() == set()
+    assert s.chosen() == "tabbed-master"
     s.open("w4")
     assert s.shape() == "H[w1 T[w2 w3 w4]]"
     s.close("w4")
     assert s.shape() == "H[w1 T[w2 w3]]"
 
 
-def test_a_style_change_that_reorders_the_windows_pauses(session):
+def test_a_style_change_that_reorders_the_windows_lets_go(session):
     s = opened(session, "master", count=3)
-    s.pausing = True
+    s.releasing = True
     s.focus("w3")
     s.key("F7")
-    assert s.chosen() == "master" and s.paused() == {"1"}
+    assert s.chosen() == "default"
     assert s.shape() == "H[w1 H[w2 w3]]"
 
 
-def test_a_tabbed_workspace_split_by_key_pauses(session):
+def test_a_tabbed_workspace_split_by_key_lets_go(session):
     s = opened(session, "tabbed", count=3)
-    s.pausing = True
+    s.releasing = True
     s.key("F7")
-    assert s.chosen() == "tabbed" and s.paused() == {"1"}
+    assert s.chosen() == "default"
     assert s.shape() == "H[w1 w2 w3]"
 
 
@@ -139,7 +139,7 @@ def test_two_windows_split_by_key_become_wide(session):
     s = opened(session, "master", count=2)
     s.focus("w1")
     s.key("F7")
-    assert s.chosen() == "wide" and s.paused() == set()
+    assert s.chosen() == "wide"
     s.open("w3")
     assert s.shape() == expected("wide", 3)
 
@@ -150,7 +150,7 @@ def test_a_split_key_on_a_single_window_changes_nothing(session):
     s.key("F6")
     s.open("w4")
     assert s.shape() == "H[w1 V[w2 w3 w4]]"
-    assert s.chosen() == "master" and s.paused() == set()
+    assert s.chosen() == "master"
 
 
 def test_a_tabbed_stack_split_by_command_becomes_master(session):
@@ -162,25 +162,25 @@ def test_a_tabbed_stack_split_by_command_becomes_master(session):
     assert s.chosen() == "master"
 
 
-def test_a_change_by_command_that_fits_nothing_pauses(session):
+def test_a_change_by_command_that_fits_nothing_lets_go(session):
     s = opened(session, "master", count=3)
-    s.pausing = True
+    s.releasing = True
     s.focus("w1")
     s.command("layout toggle split")
     s.open("w4")
-    assert s.paused() == {"1"}
+    assert s.chosen() == "default"
     assert s.shape() == "V[w1 V[w2 w3 w4]]"
     s.choose("master")
     assert s.shape() == "H[w1 V[w2 w3 w4]]"
 
 
-def test_a_pause_survives_a_restart(session):
+def test_letting_go_survives_a_restart(session):
     s = opened(session, "master", count=3)
-    s.pausing = True
+    s.releasing = True
     s.command("[title=^w3$] move left")
     s.stop_daemon()
     s.start_daemon()
-    assert s.paused() == {"1"}
+    assert s.chosen() == "default"
     assert s.shape() == "H[w1 w3 w2]"
     s.stop_daemon(signal.SIGKILL)
     s.start_daemon()
@@ -209,12 +209,12 @@ def test_a_window_dropped_where_it_does_not_fit_joins_the_stack(session):
     s.open("x1")
     s.command("[title=^x1$] move container to workspace 1")
     assert s.shape() == "H[w1 V[w2 w3 x1]]"
-    assert s.paused() == set()
+    assert s.chosen() == "master"
 
 
-def test_the_menu_marks_a_paused_workspace(session, tmp_path):
+def test_the_menu_marks_a_workspace_let_go_as_default(session, tmp_path):
     s = opened(session, "master", count=3)
-    s.pausing = True
+    s.releasing = True
     s.command("[title=^w3$] move left")
     listing = tmp_path / "listing"
     script = tmp_path / "launcher.sh"
@@ -223,9 +223,10 @@ def test_the_menu_marks_a_paused_workspace(session, tmp_path):
     s.settle()
     assert result.returncode == 0, result.stderr
     lines = listing.read_text().splitlines()
-    assert lines[list(swaytiles.LAYOUTS).index("master")].endswith("● paused")
+    assert lines[list(swaytiles.LAYOUTS).index("default")].endswith("●")
+    assert not lines[list(swaytiles.LAYOUTS).index("master")].endswith("●")
     assert "\0" not in listing.read_text()
-    assert s.chosen() == "grid" and s.paused() == set()
+    assert s.chosen() == "grid"
     assert s.shape() == expected("grid", 3)
 
 
@@ -261,3 +262,21 @@ def test_the_menu_runs_fuzzel_by_name_and_reads_its_index(session, tmp_path):
     assert "\0icon\x1f" in (tmp_path / "record.input").read_text()
     assert s.chosen() == "wide"
     assert s.shape() == expected("wide", 3)
+
+
+def test_letting_go_says_so(session, tmp_path):
+    s = opened(session, "master", count=3)
+    s.releasing = True
+    sent = tmp_path / "sent"
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "notify-send").write_text(f'#!/bin/sh\nprintf "%s|" "$@" >> "{sent}"\n')
+    (fake / "notify-send").chmod(0o755)
+    s.stop_daemon()
+    s.env["PATH"] = f"{fake}:{s.env['PATH']}"
+    s.start_daemon()
+    s.command("[title=^w3$] move left")
+    assert s.chosen() == "default"
+    assert s.wait(sent.exists)
+    assert sent.read_text() == ("swaytiles|Workspace 1 switched to default after a manual change. "
+                                "Pick a layout from the menu to tile it again.|")

@@ -602,7 +602,12 @@ def restyle(sway, workspace, target):
 
 def rearrange(sway, workspace, target, focused):
     if isinstance(target, int):
-        return sway.command(f"[con_id={target}] layout splith")
+        # A lone window keeps the geometry of the tabs it was in when `layout`
+        # only flattens its parent: sway arranges the workspace only when the
+        # layout changes. `split none` flattens and arranges.
+        parent = ancestors(workspace, target)[-2]
+        alone = parent["type"] == "con" and len(parent["nodes"]) == 1
+        return sway.command(f"[con_id={target}] {'split none' if alone else 'layout splith'}")
     if len(target[1]) == 1:
         return sway.command(f"[con_id={target[1][0]}] {layout_command(target[0])}")
     if all(not node["nodes"] for node in workspace["nodes"]):
@@ -621,6 +626,15 @@ def rebuilding(workspace, target, focused):
     commands += [f"[con_id={leaf}] move to mark {MARK}" for leaf in leaves(target)]
     commands += [f"[con_id={root}] unmark {MARK}", *build(target)]
     return commands + ([refocus(focused)] if focused in leaves(target) else [])
+
+
+def settling(workspace, target, con):
+    """The commands that take `con`, put just after the workspace's last
+    window, to its place in `target`."""
+    steps = placing(workspace, target, con, con) or rebuilding(workspace, target, con)
+    if steps is None and all(not node["nodes"] for node in workspace["nodes"]):
+        steps = build(target)
+    return steps or []
 
 
 def conforming(layout, present):
@@ -690,6 +704,88 @@ def crosses(workspace, con, direction):
     ids = [child["id"] for child in top["nodes"]]
     index = ids.index(path[path.index(top) + 1]["id"])
     return index == (len(ids) - 1 if direction in ("right", "down") else 0)
+
+
+def presses(workspace, con, direction):
+    """How many of sway's own `move <direction>` take `con` to the next
+    output, or None if one would move it inside the workspace. A window at
+    the edge of a container first leaves the container, which shows nothing
+    when the container only wraps the workspace's windows. This follows
+    container_move_in_direction in sway/commands/move.c."""
+    def model(node, parent):
+        copy = {"layout": node["layout"], "parent": parent}
+        copy["nodes"] = [model(child, copy) for child in node["nodes"]]
+        found.update({node["id"]: copy})
+        return copy
+
+    def family(layout):
+        return "h" if layout in ("splith", "tabbed") else "v" if layout in ("splitv", "stacked") else None
+
+    def squash_children(node):
+        index = 0
+        while index < len(node["nodes"]):
+            index += squash(node["nodes"][index]) + 1
+
+    def squash(node):
+        if len(node["nodes"]) != 1:
+            squash_children(node)
+            return 0
+        child, parent = node["nodes"][0], node["parent"]
+        if not (node["layout"] in ("splith", "splitv") and child["layout"] in ("splith", "splitv")
+                and family(node["layout"]) != family(child["layout"]) and family(parent["layout"]) == family(child["layout"])):
+            squash_children(node)
+            return 0
+        index = parent["nodes"].index(node)
+        parent["nodes"].remove(node)
+        for grandchild in child["nodes"]:
+            parent["nodes"].insert(index, grandchild)
+            grandchild["parent"] = parent
+        return len(child["nodes"]) - 1
+
+    def step(root, window):
+        offset = -1 if direction in ("left", "up") else 1
+        current, wrapped = window, False
+        while True:
+            parent = current["parent"]
+            if family(parent["layout"]) != family(SPLITS[direction]):
+                if parent is root:
+                    wrapper = {"layout": root["layout"], "parent": root, "nodes": root["nodes"]}
+                    for child in wrapper["nodes"]:
+                        child["parent"] = wrapper
+                    root["nodes"], root["layout"], wrapped, current = [wrapper], SPLITS[direction], True, wrapper
+                else:
+                    current = parent
+                continue
+            index = parent["nodes"].index(current)
+            beside = 0 <= index + offset < len(parent["nodes"])
+            if current is not window:
+                break
+            if beside:
+                return "within"
+            if parent is root:
+                return "cross"
+            current = parent
+        old = window["parent"]
+        if beside:
+            return "within"
+        if not wrapped and old["parent"] is root and len(old["nodes"]) == 1:
+            return "cross"
+        old["nodes"].remove(window)
+        parent["nodes"].insert(index + (0 if offset < 0 else 1), window)
+        window["parent"] = parent
+        while old is not root and not old["nodes"]:
+            old["parent"]["nodes"].remove(old)
+            old = old["parent"]
+        squash_children(root)
+        return "promote"
+
+    found = {}
+    root = model(workspace, None)
+    for count in range(1, len(ancestors(workspace, con)) + 2):
+        outcome = step(root, found[con])
+        if outcome != "promote":
+            return count if outcome == "cross" else None
+    return None
 
 
 def neighbour(tree, workspace, direction):
@@ -770,12 +866,12 @@ def load_session(path):
     except (OSError, ValueError):
         saved = {}
     saved = saved if isinstance(saved, dict) else {}
-    paused, built = saved.get("paused"), saved.get("built")
+    built = saved.get("built")
     built = {name: tree for name, tree in ((name, frozen(tree)) for name, tree in (built.items() if isinstance(built, dict) else ()))
              if tree is not None}
     kept = saved.get("kept")
     kept = {int(con): name for con, name in (kept.items() if isinstance(kept, dict) else ()) if con.isdigit() and isinstance(name, str)}
-    return {name for name in (paused if isinstance(paused, list) else ()) if isinstance(name, str)}, built, kept
+    return built, kept
 
 
 class Daemon:
@@ -798,13 +894,13 @@ class Daemon:
         self.focus = [None, None]
         self.refocused = False
         self.session = runtime_path(sway, "json")
-        self.paused, self.built, self.kept = load_session(self.session)
+        self.built, self.kept = load_session(self.session)
         self.saved = self.remembered()
         self.sync_id = 0
         self.syncing = None
 
     def remembered(self):
-        return {"paused": sorted(self.paused), "built": dict(self.built), "kept": {str(con): name for con, name in sorted(self.kept.items())}}
+        return {"built": dict(self.built), "kept": {str(con): name for con, name in sorted(self.kept.items())}}
 
     def remember(self):
         now = self.remembered()
@@ -819,7 +915,7 @@ class Daemon:
         return None if self.chosen(name) == "float" else LAYOUTS.get(self.chosen(name))
 
     def tiling(self, name):
-        return None if name in self.paused else self.chosen_tiling(name)
+        return self.chosen_tiling(name)
 
     def ordered(self, cons):
         cons = set(cons)
@@ -853,15 +949,10 @@ class Daemon:
                     self.state["workspaces"][name] = other
                     save_state(self.state)
                 return
-        self.paused.add(name)
+        notify(f"Workspace {name} switched to default after a manual change. Pick a layout from the menu to tile it again.")
+        self.state["workspaces"][name] = "default"
+        save_state(self.state)
         self.built.pop(name, None)
-
-    def resume(self, workspace):
-        name = workspace["name"]
-        found = conforming(self.chosen_tiling(name), shape(workspace)) if tiled(workspace) else []
-        if found is not None:
-            reorder(self.order, found)
-            self.paused.discard(name)
 
     def measure(self, workspace, ids):
         node = top(workspace)
@@ -881,7 +972,7 @@ class Daemon:
     def farewell(self, node):
         name = self.where.get(node["id"])
         built = self.built.get(name)
-        if name in self.paused or isinstance(built, int) or built is None or built[0] not in ("splith", "splitv") or len(built[1]) < 2:
+        if isinstance(built, int) or built is None or built[0] not in ("splith", "splitv") or len(built[1]) < 2:
             return
         master = next((con for con in self.order if con in leaves(built)), None)
         workspace = next((ws for ws in workspaces(self.sway.tree()) if ws["name"] == name), None)
@@ -946,7 +1037,7 @@ class Daemon:
         held = marked(tree, AFTER)
         wanted, commands = {}, []
         for ws in workspaces(tree):
-            active = self.chosen(ws["name"]) not in ("default", "float") and ws["name"] not in self.paused
+            active = self.chosen(ws["name"]) not in ("default", "float")
             commands += self.tile_rule(ws["name"], active)
             ids = self.ordered(tiles[ws["id"]])
             if active and ids:
@@ -1083,9 +1174,7 @@ class Daemon:
             name = workspace["name"]
             if covered(workspace) or self.chosen_tiling(name) is None:
                 continue
-            if name in self.paused:
-                self.resume(workspace)
-            elif ids := self.ordered(tiles[workspace["id"]]):
+            if ids := self.ordered(tiles[workspace["id"]]):
                 self.inspect(workspace, ids, arrived)
         self.sway.command(*self.anchors(tree, tiles))
         focused, shown, shaped = focused_node(tree)["id"], visible(tree), False
@@ -1109,7 +1198,7 @@ class Daemon:
     def record(self, tree):
         for workspace in workspaces(tree):
             name = workspace["name"]
-            if name in self.paused or self.chosen_tiling(name) is None or not tiled(workspace):
+            if self.chosen_tiling(name) is None or not tiled(workspace):
                 self.built.pop(name, None)
             elif not covered(workspace):
                 self.built[name] = trimmed(shape(workspace))
@@ -1154,8 +1243,25 @@ class Daemon:
             self.insist(f"[con_id={con}] {placement(*geometry)}")
         elif floated and not floats:
             self.sway.command(f"[con_id={con}] unmark {FLOATED}{con}, floating disable, {command}")
+        elif node["type"] == "con" and (steps := self.landing(destination, con, direction)):
+            self.sway.command(*steps, *([f"[con_id={con}] focus"] if direction else []))
+            self.record(self.sway.tree())
         else:
-            self.sway.command(f"[con_id={con}] {command if managed else native}")
+            steps = 1 if managed or not direction else presses(source, con, direction) or 1
+            self.sway.command(f"[con_id={con}] " + (command if managed else ", ".join([native] * steps)))
+
+    def landing(self, destination, con, heading):
+        """The commands that move `con` straight to its place in the layout of
+        `destination`, in one step, so sway never draws it where it would put
+        it first, next to the focused window there."""
+        name, ids = destination["name"], self.ordered(tiled(destination))
+        layout = self.tiling(name)
+        if layout is None or not ids or covered(destination):
+            return None
+        leads = bool(heading) and facing(normalize(layout([con, *ids])), heading) == [con]
+        order = [con, *ids] if leads else [*ids, con]
+        target = self.target(name, order)
+        return after(ids[-1], con) + settling(destination, target, con) + self.resize(name, target, order)
 
     def unhide(self, con=None):
         """Bring a window back from the scratchpad, the last one hidden unless
@@ -1183,8 +1289,7 @@ class Daemon:
             if ids and self.tiling(name) is not None and not covered(workspace):
                 self.order[:] = [c for c in self.order if c != con] + [con]
                 target = self.target(name, [*ids, con])
-                steps = placing(workspace, target, con, con) or rebuilding(workspace, target, con) or []
-                commands += after(ids[-1], con) + steps + self.resize(name, target, [*ids, con])
+                commands += after(ids[-1], con) + settling(workspace, target, con) + self.resize(name, target, [*ids, con])
         self.where[con] = name
         self.sway.command(*commands, f"[con_id={con}] focus")
         self.record(self.sway.tree())
@@ -1232,7 +1337,6 @@ class Daemon:
         previous = self.chosen(name)
         self.state["workspaces"][name] = choice
         save_state(self.state)
-        self.paused.discard(name)
         self.built.pop(name, None)
         self.kept = {con: place for con, place in self.kept.items() if place != name}
         if previous == "float" and choice != "float":
@@ -1254,9 +1358,6 @@ class Daemon:
         for table in (self.state["workspaces"], self.slots, self.pending, self.areas, self.ratios, self.built):
             if old in table and new not in table:
                 table[new] = table.pop(old)
-        if old in self.paused:
-            self.paused.discard(old)
-            self.paused.add(new)
         self.kept = {con: new if place == old else place for con, place in self.kept.items()}
         save_state(self.state)
 
@@ -1564,6 +1665,17 @@ def picked_layout(output, names):
     return name if name in names else None
 
 
+def notify(message):
+    """Show `message` as a desktop notification, without waiting for it."""
+    import shutil
+    import subprocess
+    def send():
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(["notify-send", "swaytiles", message], capture_output=True, timeout=5)
+    if shutil.which("notify-send"):
+        threading.Thread(target=send, daemon=True).start()
+
+
 def warn(message):
     import shutil
     import subprocess
@@ -1577,7 +1689,6 @@ def menu(sway, custom):
     import subprocess
     import tempfile
     state = load_state()
-    paused, _, _ = load_session(runtime_path(sway, "json"))
     workspace = sway.focused_workspace()
     names = list(LAYOUTS)
     chosen = state["workspaces"].get(workspace, state["layout"])
@@ -1585,8 +1696,7 @@ def menu(sway, custom):
     if not command:
         warn(f"say which menu program to use: swaytiles menu --launcher NAME, with one of {', '.join(LAUNCHERS)} or a dmenu-style command")
         return 1
-    marker = "  ● paused" if workspace in paused else "  ●"
-    entries = [f"{name} — {DESCRIPTIONS[name]}{marker if name == chosen else ''}" for name in names]
+    entries = [f"{name} — {DESCRIPTIONS[name]}{'  ●' if name == chosen else ''}" for name in names]
     if icons:
         ICONS.mkdir(parents=True, exist_ok=True)
         # fuzzel's own default text colour, and for the others a grey that shows on light and on dark.
