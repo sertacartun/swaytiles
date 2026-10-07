@@ -403,6 +403,11 @@ def box(node):
     return rect["x"], rect["y"] - deco, rect["x"] + rect["width"], rect["y"] + rect["height"]
 
 
+def span(node, axis):
+    """The node's width or height, its title bar included."""
+    return node["rect"][axis] + (node["deco_rect"]["height"] if axis == "height" else 0)
+
+
 def beside(workspace, node, direction, order):
     parent = ancestors(workspace, node["id"])[-2]
     if parent["layout"] == ("tabbed" if direction in ("left", "right") else "stacked"):
@@ -604,11 +609,11 @@ def placing(workspace, target, new, focused):
     return commands + ([refocus(focused)] if parked else [])
 
 
-def insert(sway, workspace, target, new, focused):
+def insert(sway, workspace, target, new, focused, extra=()):
     commands = placing(workspace, target, new, focused)
     if commands is None:
         return False
-    sway.command(*commands)
+    sway.command(*commands, *extra)
     return trimmed(shape(current(sway, workspace["id"]))) == target
 
 
@@ -661,18 +666,18 @@ def unstacking(workspace, focused):
     return [f"[con_id={workspace['nodes'][0]['id']}] focus", "focus parent", "layout splith", back]
 
 
-def restyle(sway, workspace, target):
+def restyle(sway, workspace, target, extra=()):
     node = workspace
     while len(node["nodes"]) == 1 and node["layout"] not in TABBED:
         node = node["nodes"][0]
     commands = relabel(node, target)
     if commands:
-        sway.command(*commands)
+        sway.command(*commands, *extra)
     return bool(commands)
 
 
-def rearrange(sway, workspace, target, focused):
-    sway.command(*(assemble(workspace, target, focused) or []))
+def rearrange(sway, workspace, target, focused, extra=()):
+    sway.command(*(assemble(workspace, target, focused) or []), *extra)
 
 
 def settling(workspace, target, con, anchor):
@@ -1010,16 +1015,21 @@ class Daemon:
         save_state(self.state)
         self.built.pop(name, None)
 
-    def measure(self, workspace, ids):
+    def measure(self, workspace, ids, new=None):
+        """Read the master's share of the workspace. A window sway has just put
+        next to the master took its room from all of them alike, so the share
+        is read from the room the others have."""
         node = top(workspace)
-        master = next((child for child in node["nodes"] if child["id"] == ids[0]), None) if ids else None
-        if node["layout"] in ("splith", "splitv") and len(node["nodes"]) > 1 and master is not None:
-            self.share(workspace["name"], node["layout"], master, node["rect"], len(node["nodes"]))
+        others = [child for child in node["nodes"] if child["id"] != new]
+        master = next((child for child in others if child["id"] == ids[0]), None) if ids else None
+        if node["layout"] in ("splith", "splitv") and len(others) > 1 and master is not None:
+            axis = "width" if node["layout"] == "splith" else "height"
+            room = node["rect"][axis] - sum(span(child, axis) for child in node["nodes"] if child["id"] == new)
+            self.share(workspace["name"], node["layout"], master, room, len(others))
 
-    def share(self, name, layout, master, area, count):
+    def share(self, name, layout, master, room, count):
         axis = "width" if layout == "splith" else "height"
-        size = master["rect"][axis] + (master["deco_rect"]["height"] if axis == "height" else 0)
-        ratio = round(size / area[axis], 2)
+        ratio = round(span(master, axis) / room, 2)
         if abs(ratio - 1 / count) < 0.02:
             self.ratios.pop(name, None)
         elif abs(ratio - self.ratios.get(name, 0)) >= 0.02:
@@ -1033,7 +1043,7 @@ class Daemon:
         master = next((con for con in self.order if con in leaves(built)), None)
         workspace = next((ws for ws in workspaces(self.sway.tree()) if ws["name"] == name), None)
         if master == node["id"] and master in built[1] and workspace is not None:
-            self.share(name, built[0], node, workspace["rect"], len(built[1]))
+            self.share(name, built[0], node, workspace["rect"]["width" if built[0] == "splith" else "height"], len(built[1]))
 
     def measure_all(self, tree):
         for workspace in workspaces(tree):
@@ -1199,10 +1209,15 @@ class Daemon:
         present = trimmed(without(shape(workspace), new))
         if reference != present and loose(reference) == loose(present):
             workspace = tidy(self.sway, workspace, reference, new)
-        if wrapped(workspace) or (trimmed(shape(workspace)) != target and not restyle(self.sway, workspace, target)
-                                  and (new not in ids or not insert(self.sway, workspace, target, new, focused))):
-            rearrange(self.sway, current(self.sway, workspace["id"]), target, focused)
-        self.sway.command(*self.resize(name, target, ids))
+        # The master's size goes in the same message as the layout, so sway
+        # draws them as one.
+        sized = self.resize(name, target, ids)
+        if wrapped(workspace):
+            rearrange(self.sway, workspace, target, focused, sized)
+        elif trimmed(shape(workspace)) == target:
+            self.sway.command(*sized)
+        elif not restyle(self.sway, workspace, target, sized) and (new not in ids or not insert(self.sway, workspace, target, new, focused, sized)):
+            rearrange(self.sway, current(self.sway, workspace["id"]), target, focused, sized)
         return True
 
     def arrange(self, new=None, moved=False):
@@ -1240,7 +1255,7 @@ class Daemon:
             elif self.tiling(name) is not None:
                 tree_shape = shape(workspace)
                 if ids and (trimmed(tree_shape) == self.target(name, ids) or trimmed(without(tree_shape, new)) == self.built.get(name)):
-                    self.measure(workspace, ids)
+                    self.measure(workspace, ids, new)
                 shaped = self.shape_up(workspace, ids, new, focused) or shaped
         self.record(self.sway.tree() if shaped else tree)
         self.remember()

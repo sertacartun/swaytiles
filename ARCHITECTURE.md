@@ -186,13 +186,16 @@ cheapest way to get there:
    is rebuilt the same way.
 
 Each step is sent as one IPC message, so sway applies it as one
-transaction and draws no half-built state. Then `resize` gives the master
-its saved share of the workspace in `ppt`.
+transaction and draws no half-built state. `resize`, which gives the
+master its saved share of the workspace in `ppt`, goes in the same
+message.
 
 **Master size.** `measure` reads the master's share after every binding
 and every arrangement that matches the target, and `farewell` reads it
 from the close event of the master, so the next master takes the same
-size.
+size. A window sway has just put next to the master took its room from
+all of them alike, so `measure` reads the share from the room the others
+have, and a lone master keeps the share it had.
 
 ## Changes made by hand
 
@@ -310,6 +313,9 @@ windows as clients (`tests/client.py`). Keys are typed with `wtype`. The
 tests read the tree and compare shapes such as `H[w1 V[w2 w3]]`; after
 every test, `conftest.py` checks that the daemon logged no error and
 let no workspace go (switched it to `default`) unless the test expected it.
+The daemon is started through `tests/daemon.py`, which imports it as the
+installed launcher does and writes every command message it sends to a
+file, so `drawn` can count the transactions an action costs.
 
 | File | Covers |
 | --- | --- |

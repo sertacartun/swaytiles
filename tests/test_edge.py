@@ -346,3 +346,27 @@ def test_a_workspace_built_in_a_container_is_rebuilt_without_it(session):
     s.start_daemon()
     assert s.wait(lambda: s.shape(exact=True) == "H[w1 V[w2 w3]]"), s.shape(exact=True)
     assert s.focused() == "w3"
+
+
+def test_closing_the_master_is_drawn_in_one_step(session):
+    s = session("master")
+    opened(s, 3)
+    s.command("[title=^w1$] resize set width 70 ppt")
+    s.open("w4")
+    drawn = s.drawn(lambda: s.close("w1"))
+    assert len(drawn) == 1, drawn
+    assert s.shape() == "H[w2 V[w3 w4]]"
+    assert s.width("w2") == 0.7
+
+
+def test_the_master_keeps_its_size_down_to_one_window_and_back(session):
+    s = session("master")
+    opened(s, 2)
+    s.command("[title=^w1$] resize set width 70 ppt")
+    s.open("w3")
+    s.close("w2")
+    s.close("w3")
+    drawn = s.drawn(lambda: s.open("w4"))
+    assert len(drawn) == 1, drawn
+    assert s.shape() == "H[w1 w4]"
+    assert s.width("w1") == 0.7

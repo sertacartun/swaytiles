@@ -9,6 +9,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -20,8 +21,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DAEMON = ROOT / "swaytiles.py"
 CLIENT = Path(__file__).resolve().parent / "client.py"
+COUNTED = Path(__file__).resolve().parent / "daemon.py"
 CLIENT_PYTHON = os.environ.get("SWAY_LAYOUT_TEST_PYTHON", "/usr/bin/python3")
 LETTERS = {"splith": "H", "splitv": "V", "tabbed": "T", "stacked": "S"}
+QUIET = ("mark ", "unmark ", "set ")
 
 
 def available():
@@ -69,6 +72,7 @@ class Session:
         self.state.mkdir(parents=True, exist_ok=True)
         self.state_file.write_text(json.dumps({"layout": layout, "workspaces": workspaces or {}}))
         self.errors = Path(base) / "daemon.err"
+        self.sent = Path(base) / "daemon.sent"
         self.config = Path(base) / "sway.conf"
         self.config.write_text("default_border normal\nfocus_follows_mouse no\n" + config)
         self.outputs = outputs
@@ -113,7 +117,8 @@ class Session:
 
     def start_daemon(self):
         with open(self.errors, "a") as errors:
-            self.daemon = subprocess.Popen([sys.executable, str(DAEMON)], env=self.env, stdout=subprocess.DEVNULL,
+            self.daemon = subprocess.Popen([sys.executable, str(COUNTED)], env={**self.env, "SWAYTILES_SENT": str(self.sent)},
+                                           stdout=subprocess.DEVNULL,
                                            stderr=errors, start_new_session=True)
         self.wait(self.locked, 5)
         time.sleep(0.2)
@@ -153,6 +158,16 @@ class Session:
     @property
     def alive(self):
         return self.daemon.poll() is None
+
+    def drawn(self, action):
+        """The command messages the daemon sent while `action` ran that can
+        change what sway draws: anything but marks and variables."""
+        before = len(self.sent.read_text().splitlines()) if self.sent.exists() else 0
+        action()
+        self.settle()
+        sent = self.sent.read_text().splitlines()[before:] if self.sent.exists() else []
+        return [message for message in sent
+                if any(not part.split("] ", 1)[-1].startswith(QUIET) for part in re.split(r"[;,] ", message))]
 
     def stderr(self):
         return self.errors.read_text() if self.errors.exists() else ""
