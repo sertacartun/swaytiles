@@ -1486,6 +1486,10 @@ class Daemon:
             workspace = next(ws for ws in workspaces(tree) if ws["name"] == name)
             if ids := tiled(workspace):
                 self.sway.command(*(assemble(workspace, ("splith", ids), focused_node(tree)["id"]) or []))
+            elif workspace["layout"] in TABBED and focused_node(tree)["id"] == workspace["id"]:
+                # Left tabbed or stacked by `layout` on the empty workspace: sway
+                # turns a workspace's own layout only while it has the focus.
+                self.sway.command("layout splith")
         self.arrange()
 
     def rename(self, workspace):

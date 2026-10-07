@@ -135,6 +135,18 @@ def test_a_tabbed_workspace_split_by_key_lets_go(session):
     assert s.shape() == "H[w1 w2 w3]"
 
 
+def test_default_turns_an_empty_tabbed_workspace_back_to_split(session):
+    # `layout tabbed` on an empty workspace changes the workspace itself.
+    s = session("default")
+    s.command("layout tabbed")
+    assert s.workspace()["layout"] == "tabbed"
+    s.choose("default")
+    assert s.workspace()["layout"] == "splith"
+    s.open("w1")
+    s.open("w2")
+    assert s.shape() == "H[w1 w2]"
+
+
 def test_two_windows_split_by_key_become_wide(session):
     s = opened(session, "master", count=2)
     s.focus("w1")
