@@ -53,11 +53,12 @@ def test_other_layouts(session, layout, before, after):
 
 def test_a_workspace_let_go_has_no_master(session):
     s = started(session, "master")
-    s.choose("default")
-    assert s.shape() == "H[w1 w2 w3 w4]"
+    s.releasing = True
+    s.command("[title=^w4$] move left")
+    assert s.shape() == "H[w1 w4 V[w2 w3]]"
     s.focus("w2")
     s.key("F9")
-    assert s.shape() == "H[w1 w2 w3 w4]"
+    assert s.shape() == "H[w1 w4 V[w2 w3]]"
     s.choose("master")
     s.focus("w4")
     s.key("F9")

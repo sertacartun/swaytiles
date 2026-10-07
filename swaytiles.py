@@ -29,7 +29,8 @@ RENAMED = {"sway": "default"}
 CASCADE = 40
 # sway reports no event for a window dropped on a workspace's edge or swapped
 # with the mouse; the daemon looks at the tree this often, for this long after
-# the focus changes, as pressing on a window to drag it focuses it.
+# the focus changes, as pressing on a window to drag it focuses it. A swap
+# keeps the layout in a new order; any other drop lets the workspace go.
 WATCH = (0.2, 4.0)
 TABBED = ("tabbed", "stacked")
 SPLITS = {"right": "splith", "down": "splitv", "left": "splith", "up": "splitv"}
@@ -713,21 +714,14 @@ def arrived(workspace, con, anchor):
     return copy(workspace)
 
 
-def logical(layout, present):
-    """The windows of `present` in the order that has `layout` put each of
-    them where it is, counting places in the order of the tree."""
+def conforming(layout, present):
     cons = leaves(present) if present is not None else []
     if not cons:
         return None
-    order = [0] * len(cons)
+    logical = [0] * len(cons)
     for position, index in enumerate(leaves(trimmed(layout(list(range(len(cons))))))):
-        order[index] = cons[position]
-    return order
-
-
-def conforming(layout, present):
-    order = logical(layout, present)
-    return order if order and outline(layout(order)) == outline(present) else None
+        logical[index] = cons[position]
+    return logical if outline(layout(logical)) == outline(present) else None
 
 
 def reorder(order, ids):
@@ -1006,18 +1000,18 @@ class Daemon:
     def target(self, name, ids):
         return trimmed(self.tiling(name)(ids)) if ids else None
 
-    def inspect(self, workspace, ids, arrived, reshaped=False):
+    def inspect(self, workspace, ids, arrived):
         name, seen = workspace["name"], self.built.get(workspace["name"])
         known = set(leaves(seen)) if seen is not None else set()
         extra = [con for con in ids if con not in known]
         present = without(shape(workspace), *extra)
         before = without(seen, *known.difference(ids)) if seen is not None else None
         if seen is not None and outline(before) != outline(present):
-            self.adapt(workspace, present, bare(trimmed(before)) == bare(trimmed(present)), not reshaped)
+            self.adapt(workspace, present, bare(trimmed(before)) == bare(trimmed(present)))
         elif arrived in ids and (found := conforming(self.tiling(name), shape(workspace))):
             reorder(self.order, found)
 
-    def adapt(self, workspace, present, restyled, moved=False):
+    def adapt(self, workspace, present, restyled):
         name = workspace["name"]
         candidates = [(self.chosen(name), self.tiling(name))]
         if restyled:
@@ -1031,12 +1025,6 @@ class Daemon:
                     self.state["workspaces"][name] = other
                     save_state(self.state)
                 return
-        if moved:
-            # A window dragged with the mouse, moved with sway's own `move` or
-            # changed with swaymsg: the windows take the order they now have,
-            # and the layout is built again.
-            reorder(self.order, logical(self.tiling(name), present))
-            return
         notify(f"Workspace {name} switched to default after a manual change. Pick a layout from the menu to tile it again.")
         self.state["workspaces"][name] = "default"
         save_state(self.state)
@@ -1265,10 +1253,7 @@ class Daemon:
             rearrange(self.sway, current(self.sway, workspace["id"]), target, focused, sized)
         return True
 
-    def arrange(self, new=None, moved=False, reshaped=False):
-        """Bring every workspace in line with its layout. `reshaped` says that
-        a key bound to `layout` or `split` ran; any other change made by hand
-        is a move, which reorders the windows."""
+    def arrange(self, new=None, moved=False):
         tree = self.sway.tree()
         unseen = [ws["name"] for ws in workspaces(tree) if ws["name"] not in self.state["workspaces"]]
         if unseen:
@@ -1290,7 +1275,7 @@ class Daemon:
             if covered(workspace) or self.chosen_tiling(name) is None:
                 continue
             if ids := self.ordered(tiles[workspace["id"]]):
-                self.inspect(workspace, ids, arrived, reshaped)
+                self.inspect(workspace, ids, arrived)
         self.sway.command(*self.anchors(tree, tiles))
         focused, shown, shaped = focused_node(tree)["id"], visible(tree), False
         for workspace in workspaces(tree):
@@ -1516,7 +1501,7 @@ class Daemon:
             elif command.startswith("nop layout "):
                 self.act(command[11:])
             elif RESHAPING.search(command):
-                self.arrange(reshaped=True)
+                self.arrange()
             elif following(command):
                 self.learn(event["binding"], command)
                 self.measure_all(self.sway.tree())

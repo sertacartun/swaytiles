@@ -220,12 +220,23 @@ outlines are the same, nothing was changed by hand. If they differ,
   layout with the same window order: switch to it. Tabbing the stack of
   `master` gives `tabbed-master`.
 - Anything else: let the workspace go. Its layout becomes `default`, the
-  tile rule is switched off, and sway places new windows as it normally
-  would. Picking a layout from the menu takes it over again.
+  tile rule is switched off, a notification says so, and sway places new
+  windows as it normally would. Picking a layout from the menu takes it
+  over again.
+
+So a window dragged with the mouse stays where it is dropped, as in sway:
+swapped with another one (dropped on its middle) or dropped between two
+windows of the stack it keeps the layout in a new order, and dropped
+anywhere else it lets the workspace go. Keyboard moves (`nop layout
+move`) always keep the layout.
 
 Bindings whose command contains `split` or `layout` trigger an
-`arrange` at once, since no other event follows them. The same commands
-sent with `swaymsg` are noticed at the next window event.
+`arrange` at once, since no other event follows them. sway emits no
+event for the same commands sent with `swaymsg`, nor for a window
+swapped with the mouse or dropped on a workspace's edge. Pressing on a
+window to drag it focuses it, so for a few seconds after every focus
+change the daemon reads the tree five times a second (`WATCH`) and
+arranges when a tiled workspace differs from `built`.
 
 Windows arriving from another workspace are exempt: if their drop point
 fits the layout they keep it, otherwise they join the end of the stack.
@@ -298,7 +309,9 @@ These were measured on sway 1.12 or read in its source:
 
 - No event is emitted for `split` and `layout` commands; a binding event
   follows every `bindsym`, after its command has run.
-- Mouse drags and keyboard moves both emit `window::move`.
+- Keyboard moves and a mouse drop on a window's edge emit
+  `window::move`; a mouse swap or a drop on a workspace's edge emits
+  nothing. Only pressing on an unfocused window emits `window::focus`.
 - `new` is emitted before `for_window` rules run.
 - Variables in a `for_window` command are expanded when the rule is
   defined, unless written `$$name`.
@@ -329,6 +342,7 @@ file, so `drawn` can count the transactions an action costs.
 | `test_pure.py` | the layout arithmetic, without sway |
 | `test_layouts.py` | every layout while windows open, close and switch |
 | `test_manual.py` | changes made by hand, letting a workspace go, the menu and the config command |
+| `test_drag.py` | mouse drags, through a virtual pointer (`tests/pointer.py`) |
 | `test_promote.py` | swapping with the master |
 | `test_float.py` | float workspaces |
 | `test_outputs.py` | two outputs of different sizes and scales |
@@ -340,13 +354,9 @@ file, so `drawn` can count the transactions an action costs.
 - When the master closes, sway lays the remaining windows out once before
   the daemon does, so slow clients may show one extra frame.
 - sway reports no event for a window dropped on a workspace's edge or
-  swapped with the mouse. Pressing on a window to drag it focuses it, so
-  the daemon looks at the tree for a few seconds after every focus change;
-  a drag of the window that already had the focus is noticed at the next
-  event.
-- Only keys bound to `layout` or `split` let a workspace go. Any other
-  change made by hand (a mouse drag, sway's own `move`, a `swaymsg`
-  command) is taken as a move: the windows keep their new order and the
-  layout is built again.
+  swapped with the mouse, nor for `layout` or `split` sent with `swaymsg`.
+  Pressing on a window to drag it focuses it, so the daemon looks at the
+  tree for a few seconds after every focus change; anything else is
+  noticed at the next event.
 - A new floating window takes the next slot in the cascade rather than a
   slot freed by a closed window.
