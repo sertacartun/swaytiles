@@ -190,26 +190,20 @@ removes the marks and makes hidden windows visible again.
 
 ## Shaping a workspace
 
-`shape_up` compares the target tree with the one on screen and picks the
-cheapest way to get there:
+`shape_up` compares the target tree with the one on screen. When they
+differ, `assemble` builds the target right under the workspace. It
+gathers the windows with `move to mark`, which empties the containers
+they were in, and sway removes them. A `layout` command on a window right
+under the workspace would wrap all the windows in a new container, so the
+workspace's own layout is turned with a `move` across it instead: sway
+puts the window first and gives the workspace the move's orientation
+(`workspace_rejigger`). A tabbed or stacked layout is one container under
+the workspace. A workspace whose windows sit in a container of their own,
+left by an older version or by hand, is rebuilt the same way. Building
+always from scratch is one path for every case; the sizes of the stack's
+windows go back to even, and the master keeps its saved share.
 
-1. **`tidy`**: only wrappers differ. Add or drop single-child containers.
-2. **`restyle`**: the nesting is right and only styles differ, for example
-   after switching from `master` to `tabbed-master`. Send `layout`
-   commands only, so sizes set by hand survive.
-3. **`insert`**: one window is new. Put it next to its neighbour.
-4. **`rearrange`**: `assemble` builds the target right under the
-   workspace. It gathers the windows with `move to mark`, which empties
-   the containers they were in, and sway removes them. A `layout` command
-   on a window right under the workspace would wrap all the windows in a
-   new container, so the workspace's own layout is turned with a `move`
-   across it instead: sway puts the window first and gives the workspace
-   the move's orientation (`workspace_rejigger`). A tabbed or stacked
-   layout is one container under the workspace. A workspace whose windows
-   sit in a container of their own, left by an older version or by hand,
-   is rebuilt the same way.
-
-Each step is sent as one IPC message, so sway applies it as one
+The whole build is sent as one IPC message, so sway applies it as one
 transaction and draws no half-built state. `resize`, which gives the
 master its saved share of the workspace in `ppt`, goes in the same
 message.
@@ -292,11 +286,11 @@ by sway itself still shows one frame with the hole.
 `nop layout show` (`swaytiles show`) brings a window back from the
 scratchpad. sway would first tile it next to the focused window, so the
 daemon sends `scratchpad show`, `floating disable`, the move after the
-last window and the steps of `placing` or `assemble` as one command,
+last window and the steps of `assemble` as one command,
 and records the result as `built`.
 
 `nop layout master` is the same swap, with the master. On workspaces
-without a layout, a move is sway's own, except that `crosses` predicts
+without a layout, a move is sway's own, except that `presses` predicts
 when sway would send the window to another output and the daemon does
 it in one step, so it can be floated first when the target is a float
 workspace.

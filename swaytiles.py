@@ -335,13 +335,6 @@ def plain(node):
     return (node[0], merged)
 
 
-def singles(node):
-    if isinstance(node, int):
-        return []
-    found = [node] if len(node[1]) == 1 and node[0] not in TABBED and isinstance(node[1][0], int) else []
-    return found + [single for child in node[1] for single in singles(child)]
-
-
 def trimmed(node):
     node = normalize(node)
     while node and not isinstance(node, int) and len(node[1]) == 1 and node[0] not in TABBED:
@@ -387,10 +380,6 @@ def ancestors(node, con):
 
 def shape(node):
     return node["id"] if not node["nodes"] else (node["layout"], [shape(child) for child in node["nodes"]])
-
-
-def containers(node):
-    return [found for child in node["nodes"] if child["nodes"] for found in (child, *containers(child))]
 
 
 def leaf_nodes(node):
@@ -610,99 +599,10 @@ def refocus(con):
     return f"[con_id={con} workspace=__focused__] focus"
 
 
-def current(sway, workspace_id):
-    return next(ws for ws in workspaces(sway.tree()) if ws["id"] == workspace_id)
-
-
-def placing(workspace, target, new, focused):
-    """The commands that take `new` from just after the last window to its
-    place in `target`, when nothing else is out of place."""
-    parent = parent_of(target, new)
-    if parent is None or trimmed(without(target, new)) != trimmed(without(shape(workspace), new)):
-        return None
-    layout, children = parent
-    index = children.index(new)
-    siblings = children[:index] + children[index + 1:]
-    anchor = siblings[max(index - 1, 0)] if siblings else new
-    grand = parent_of(target, parent) if not siblings else None
-    follower = grand[1][1] if grand and grand[1][0] == parent else None
-    swapped = isinstance(follower, int)
-    holders = [node["id"] for node in ancestors(workspace, anchor)[1:-1]] if isinstance(anchor, int) else []
-    if (siblings or swapped) and not holders and (not isinstance(anchor, int) or workspace["layout"] != layout):
-        return None
-    parked = (siblings or swapped) and focused in leaves(target)
-    commands = [f"[con_id={new}] swap container with con_id {follower}"] if swapped else []
-    if siblings:
-        commands += after(anchor, new)
-    else:
-        commands += [f"[con_id={anchor}] split h", f"[con_id={anchor}] {layout_command(layout)}"]
-    commands += [f"[con_id={new}] swap container with con_id {anchor}"] if index == 0 and siblings else []
-    return commands + ([refocus(focused)] if parked else [])
-
-
-def insert(sway, workspace, target, new, focused, extra=()):
-    commands = placing(workspace, target, new, focused)
-    if commands is None:
-        return False
-    sway.command(*commands, *extra)
-    return trimmed(shape(current(sway, workspace["id"]))) == target
-
-
-def tidy(sway, workspace, target, new):
-    wanted = {leaf: layout for layout, (leaf,) in singles(target)}
-    nested = containers(workspace)
-    parents = {child["id"]: node for node in [workspace, *containers(workspace)] for child in node["nodes"]}
-    commands = [f"[con_id={node['nodes'][0]['id']}] split none" for node in nested
-                if len(node["nodes"]) == 1 and node["layout"] not in TABBED
-                and wanted.get(node["nodes"][0]["id"]) != node["layout"]]
-    for leaf, layout in wanted.items():
-        parent = parents[leaf]
-        others = [child["id"] for child in parent["nodes"] if child["id"] != new]
-        if parent["type"] != "con" or parent["layout"] != layout or others != [leaf]:
-            commands += [f"[con_id={leaf}] split h", f"[con_id={leaf}] {layout_command(layout)}"]
-    if not commands:
-        return workspace
-    sway.command(*commands)
-    return current(sway, workspace["id"])
-
-
-def relabel(node, target):
-    if isinstance(target, int):
-        return [] if not node["nodes"] and node["id"] == target else None
-    layout, children = target
-    if len(node["nodes"]) != len(children):
-        return None
-    if node["type"] == "workspace" and node["layout"] != layout:
-        # `layout` on a window right under the workspace wraps the windows.
-        return None
-    found = [relabel(child, part) for child, part in zip(node["nodes"], children, strict=True)]
-    if None in found:
-        return None
-    commands = [] if node["layout"] == layout else [f"[con_id={node['nodes'][0]['id']}] {layout_command(layout)}"]
-    return commands + [command for part in found for command in part]
-
-
-def restyle(sway, workspace, target, extra=()):
-    node = workspace
-    while len(node["nodes"]) == 1 and node["layout"] not in TABBED:
-        node = node["nodes"][0]
-    commands = relabel(node, target)
-    if commands:
-        sway.command(*commands, *extra)
-    return bool(commands)
-
-
-def rearrange(sway, workspace, target, focused, extra=()):
-    sway.command(*(assemble(workspace, target, focused) or []), *extra)
-
-
 def settling(workspace, target, con, anchor):
     """The commands that take `con`, put just after `anchor` on the workspace,
     to its place in `target`."""
-    steps = placing(workspace, target, con, con)
-    if steps is None:
-        steps = assemble(arrived(workspace, con, anchor), target, con)
-    return steps or []
+    return assemble(arrived(workspace, con, anchor), target, con) or []
 
 
 def arrived(workspace, con, anchor):
@@ -1397,25 +1297,16 @@ class Daemon:
         target = self.target(name, ids)
         if target is None:
             return False
-        if target == trimmed(shape(workspace)) and not wrapped(workspace):
-            # In place already, by the tile rule: a new window may still have
-            # taken room from the master.
-            sized = self.resize(name, target, ids) if new in ids else []
-            self.sway.command(*sized)
-            return bool(sized)
-        reference = trimmed(without(target, new)) if new in ids else target
-        present = trimmed(without(shape(workspace), new))
-        if reference != present and loose(reference) == loose(present):
-            workspace = tidy(self.sway, workspace, reference, new)
         # The master's size goes in the same message as the layout, so sway
         # draws them as one.
         sized = self.resize(name, target, ids)
-        if wrapped(workspace):
-            rearrange(self.sway, workspace, target, focused, sized)
-        elif trimmed(shape(workspace)) == target:
+        if target == trimmed(shape(workspace)) and not wrapped(workspace):
+            # In place already, by the tile rule: a new window may still have
+            # taken room from the master.
+            sized = sized if new in ids else []
             self.sway.command(*sized)
-        elif not restyle(self.sway, workspace, target, sized) and (new not in ids or not insert(self.sway, workspace, target, new, focused, sized)):
-            rearrange(self.sway, current(self.sway, workspace["id"]), target, focused, sized)
+            return bool(sized)
+        self.sway.command(*(assemble(workspace, target, focused) or []), *sized)
         return True
 
     def arrange(self, new=None, moved=False):

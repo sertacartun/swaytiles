@@ -75,14 +75,14 @@ def test_arranging_from_an_old_tree_leaves_the_focus_where_the_user_went(session
     workspace = next(ws for ws in swaytiles.workspaces(tree) if ws["name"] == "3")
     ids, focused = swaytiles.tiled(workspace), swaytiles.focused_node(tree)["id"]
     s.command("workspace 1")
-    swaytiles.rearrange(sway, workspace, swaytiles.trimmed(swaytiles.LAYOUTS["master"](ids)), focused)
+    sway.command(*swaytiles.assemble(workspace, swaytiles.trimmed(swaytiles.LAYOUTS["master"](ids)), focused))
     s.settle()
     assert s.shape("3") == "H[c1 V[c2 c3]]"
     assert s.focused() == "1"
     s.command("workspace 3")
     assert s.focused() == "c3"
     workspace = next(ws for ws in swaytiles.workspaces(sway.tree()) if ws["name"] == "3")
-    swaytiles.rearrange(sway, workspace, swaytiles.trimmed(swaytiles.LAYOUTS["master-right"](ids)), focused)
+    sway.command(*swaytiles.assemble(workspace, swaytiles.trimmed(swaytiles.LAYOUTS["master-right"](ids)), focused))
     s.settle()
     assert s.shape("3") == "H[V[c2 c3] c1]"
     assert s.focused() == "c3"
