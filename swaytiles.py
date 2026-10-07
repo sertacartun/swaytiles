@@ -1350,8 +1350,7 @@ class Daemon:
         name = destination["name"]
         away = self.leaving(source, node) if managed else []
         across = ("y", "height") if direction in ("left", "right") else ("x", "width")
-        level = (node["rect"][across[0]] + node["rect"][across[1]] / 2 - source["rect"][across[0]]) / source["rect"][across[1]]
-        steps = self.entering(destination, con, direction, level)
+        steps = self.entering(destination, con, direction, node["rect"][across[0]] + node["rect"][across[1]] / 2)
         self.carried = (con, name)
         command = native if target else f"move container to workspace {quoted(name)}, focus"
         floats = self.state["workspaces"].get(name, self.state["layout"]) == "float"
@@ -1374,22 +1373,23 @@ class Daemon:
             count = direction and presses(source, con, direction)
             self.sway.command(f"[con_id={con}] " + (", ".join([native] * count) if count else command), *away)
 
-    def entering(self, workspace, con, heading=None, level=0.5):
+    def entering(self, workspace, con, heading=None, middle=None):
         """The commands that take `con` from wherever it is to its place in
         the layout of `workspace`, in one step, so sway never draws it where
         it would put it first, next to the focused window there. Coming in
         through an edge, it goes on straight: of the places the layout puts
-        at that edge, it takes the one level with where it was, `level` the
-        share of the way down (or across) its own screen its middle was.
+        at that edge, it takes the one level with where it was, `middle`
+        where its middle was across the screens as they are laid out.
         Otherwise it joins the end of the order."""
         name = workspace["name"]
         ids = [other for other in self.ordered(tiled(workspace)) if other != con]
         layout = self.tiling(name)
-        along = ("splitv",) if heading in ("left", "right") else ("splith",)
+        (start, size), along = (("y", "height"), ("splitv",)) if heading in ("left", "right") else (("x", "width"), ("splith",))
+        area = workspace["rect"]
 
         def off(place):
             built = normalize(layout([*ids[:place], con, *ids[place:]]))
-            return abs(middles(built, along)[con] - level) if con in facing(built, heading) else 2
+            return abs(area[start] + middles(built, along)[con] * area[size] - middle) if con in facing(built, heading) else math.inf
         # Even, it takes the near end, as sway's own `move` does.
         near = heading in ("right", "down")
         at = min(range(len(ids) + 1), key=lambda place: (off(place), place if near else -place)) if heading and layout else len(ids)

@@ -287,17 +287,17 @@ layout:
 3. At the edge, `neighbour` finds the workspace on the next output and
    the window moves there, and goes on straight: of the places the
    layout puts at the edge it comes in through (`facing`), it takes the
-   one whose middle (`middles`, splits taken even) is level with where
-   its middle was on its own screen, as a share of each screen. Moving
-   right into `master` makes it the master, the only place at that edge;
-   into `wide` the master from the upper half, the first of the stack
-   from the lower; into the stack of `master` from the right, the place
-   at its height, so moving it there and back puts it where it was. Tabs
-   and stacked titles all fill the same space, so into them, as for two
-   places as near, it takes the near end, as sway's own `move` does. Into a
-   workspace with no layout the daemon sends sway's own `move`, as many
-   times as it takes to leave the workspace (`presses`), and sway puts
-   it. On a move to a workspace by name or number it joins the end of
+   one whose middle (`middles`, splits taken even) is nearest the
+   height its middle was at, across the screens as they are laid out, so
+   it lands by what it was beside, as the pointer would. Moving right
+   into `master` makes it the master, the only place at that edge; into
+   `wide` the master or the first of the stack, as it was level with the
+   upper or the lower part; into the stack of `master` from the right,
+   the place at its height. Tabs and stacked titles all fill the same
+   space, so into them, as for two places as near, it takes the near
+   end, as sway's own `move` does. Into a workspace with no layout the
+   daemon sends sway's own `move`, as many times as it takes to leave
+   the workspace (`presses`), and sway puts it. On a move to a workspace by name or number it joins the end of
    the stack. A move in a direction takes the focus along, like sway's
    own. It is recorded as `carried` until the next look at the tree, so
    it does not keep a drop point.

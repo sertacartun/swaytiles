@@ -130,14 +130,15 @@ def test_a_window_carried_to_another_output_enters_at_the_near_edge(session):
     assert (s.shape("10"), s.shape("1")) == ("H[b1 b2]", "H[b3 a1]")
     assert s.focused() == "b3"
     s.key("F1")
-    assert (s.shape("10"), s.shape("1")) == ("H[b1 V[b2 b3]]", "a1")
+    # Full height on the right screen, its middle is level with the top
+    # half of the left one.
+    assert (s.shape("10"), s.shape("1")) == ("H[b1 V[b3 b2]]", "a1")
     assert s.focused() == "b3"
     s.key("F1")
-    s.key("F1")
-    assert (s.shape("10"), s.shape("1")) == ("H[b3 V[b2 b1]]", "a1")
+    assert (s.shape("10"), s.shape("1")) == ("H[b3 V[b1 b2]]", "a1")
     s.focus("a1")
     s.key("F1")
-    assert (s.shape("10"), s.shape("1")) == ("H[b3 V[b2 a1 b1]]", "-")
+    assert (s.shape("10"), s.shape("1")) == ("H[b3 V[a1 b1 b2]]", "-")
     assert s.focused() == "a1"
 
 
@@ -237,7 +238,7 @@ def test_the_workspace_a_window_leaves_is_put_in_order_in_the_same_step(session)
     ("wide", "b4", "V[a1 H[b4 a2 a3]]"),
     ("grid", "b2", "V[H[b2 a1] H[a2 a3]]"),
     ("grid", "b4", "V[H[a1 a2] H[b4 a3]]"),
-    ("master-right", "b2", "H[V[b2 a2 a3] a1]"),
+    ("master-right", "b2", "H[V[a2 b2 a3] a1]"),
     ("master-right", "b4", "H[V[a2 a3 b4] a1]"),
     ("stacking", "b4", "S[b4 a1 a2 a3]"),
     ("tabbed", "b4", "T[b4 a1 a2 a3]"),
@@ -256,18 +257,16 @@ def test_a_window_carried_to_another_output_goes_on_straight(session, layout, mo
     assert s.shape("1") == entered
 
 
-def test_a_window_carried_there_and_back_comes_back_to_its_place(session):
-    s = session("master", workspaces={"1": "master", "10": "master"}, config=CONFIG, outputs=2)
+def test_a_window_level_with_the_lower_part_of_a_bigger_screen_goes_into_the_stack(session):
+    # The left screen sits level with the lower two thirds of the right one.
+    s = session("master", workspaces={"1": "wide", "10": "master"}, config=CONFIG, outputs=2)
     s.command("workspace 1")
-    s.open("a1")
-    s.command("workspace 10")
-    for title in ("b1", "b2", "b3", "b4"):
+    for title in ("a1", "a2", "a3", "a4"):
         s.open(title)
-    s.focus("b3")
+    s.command("workspace 10")
+    s.open("b1")
     s.key("F2")
-    assert (s.shape("10"), s.shape("1")) == ("H[b1 V[b2 b4]]", "H[b3 a1]")
-    s.key("F1")
-    assert (s.shape("10"), s.shape("1")) == ("H[b1 V[b2 b3 b4]]", "a1")
+    assert s.shape("1") == "V[a1 H[b1 a2 a3 a4]]"
 
 
 def test_a_window_carried_into_a_workspace_without_a_layout_enters_where_sway_puts_it(session):
@@ -284,4 +283,4 @@ def test_a_window_carried_into_a_workspace_without_a_layout_enters_where_sway_pu
     assert (s.shape("1"), s.shape("10")) == ("H[b3 a1 a2]", "H[b1 b2]")
     assert s.focused() == "b3"
     s.key("F1")
-    assert (s.shape("1"), s.shape("10")) == ("H[a1 a2]", "H[b1 V[b2 b3]]")
+    assert (s.shape("1"), s.shape("10")) == ("H[a1 a2]", "H[b1 V[b3 b2]]")
