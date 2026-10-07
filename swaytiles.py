@@ -831,17 +831,15 @@ def facing(node, direction):
     return [leaf for child in node[1] for leaf in facing(child, direction)]
 
 
-def landing(workspace, direction):
-    """The window sway's `move` puts a window next to when it comes into
-    `workspace` from another output: it takes the near end of a split the
-    way it moves, and goes into the focused child of one split across."""
-    node, near, edge = workspace, direction in ("right", "down"), False
-    along = ("splith", "tabbed") if direction in ("left", "right") else ("splitv", "stacked")
-    while node["nodes"]:
-        edge = edge or node["layout"] in along
-        node = (node["nodes"][0 if near else -1] if edge else
-                next(child for id in node["focus"] for child in node["nodes"] if child["id"] == id))
-    return node["id"]
+def middles(node, along, low=0.0, high=1.0):
+    """Where the middle of each window of a layout falls across the
+    workspace, as a share of it, in the splits `along` that way."""
+    if isinstance(node, int):
+        return {node: (low + high) / 2}
+    kind, children = node
+    step = (high - low) / len(children) if kind in along else 0
+    return {leaf: middle for index, child in enumerate(children)
+            for leaf, middle in middles(child, along, low + index * step, low + (index + 1) * step if step else high).items()}
 
 
 def floater(workspace, node, direction):
@@ -1350,7 +1348,9 @@ class Daemon:
             return self.sway.command(f"[con_id={con}] {native}")
         name = destination["name"]
         away = self.leaving(source, node) if managed else []
-        steps = self.entering(destination, con, direction)
+        across = ("y", "height") if direction in ("left", "right") else ("x", "width")
+        level = (node["rect"][across[0]] + node["rect"][across[1]] / 2 - source["rect"][across[0]]) / source["rect"][across[1]]
+        steps = self.entering(destination, con, direction, level)
         self.carried = (con, name)
         command = native if target else f"move container to workspace {quoted(name)}, focus"
         floats = self.state["workspaces"].get(name, self.state["layout"]) == "float"
@@ -1373,24 +1373,25 @@ class Daemon:
             count = direction and presses(source, con, direction)
             self.sway.command(f"[con_id={con}] " + (", ".join([native] * count) if count else command), *away)
 
-    def entering(self, workspace, con, heading=None):
+    def entering(self, workspace, con, heading=None, level=0.5):
         """The commands that take `con` from wherever it is to its place in
         the layout of `workspace`, in one step, so sway never draws it where
         it would put it first, next to the focused window there. Coming in
-        through an edge, it takes one of the places the layout puts at that
-        edge: next to the window sway's own `move` would put it by, before
-        it on a move right or down and after it on a move left or up, or
-        when that is not at the edge, the first place there or the last.
+        through an edge, it goes on straight: of the places the layout puts
+        at that edge, it takes the one level with where it was, `level` the
+        share of the way down (or across) its own screen its middle was.
         Otherwise it joins the end of the order."""
         name = workspace["name"]
         ids = [other for other in self.ordered(tiled(workspace)) if other != con]
         layout = self.tiling(name)
-        places = range(len(ids) + 1) if heading and layout else ()
-        edge = [place for place in places if con in facing(normalize(layout([*ids[:place], con, *ids[place:]])), heading)]
+        along = ("splitv", "stacked") if heading in ("left", "right") else ("splith", "tabbed")
+
+        def off(place):
+            built = normalize(layout([*ids[:place], con, *ids[place:]]))
+            return abs(middles(built, along)[con] - level) if con in facing(built, heading) else 2
+        # Even, it takes the near end, as sway's own `move` does.
         near = heading in ("right", "down")
-        by = landing(workspace, heading) if edge else None
-        at = ids.index(by) + (not near) if by in ids else None
-        at = at if at in edge else (min if near else max)(edge, default=len(ids))
+        at = min(range(len(ids) + 1), key=lambda place: (off(place), place if near else -place)) if heading and layout else len(ids)
         self.order[:] = [other for other in self.order if other != con]
         self.order.insert(self.order.index(ids[at]) if at < len(ids) else len(self.order), con)
         if not ids or layout is None or covered(workspace):

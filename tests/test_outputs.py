@@ -57,7 +57,7 @@ def test_two_outputs(session):
     assert s.shape("3") == "- F[a2 c1]" and floats_fit(s, "3")
     s.focus("c1")
     s.key("F1")
-    assert s.shape("10") == "H[a4 S[b3 b1 b4 c1]]"
+    assert s.shape("10") == "H[a4 S[b3 c1 b1 b4]]"
     s.command("workspace 3")
     s.command("move workspace to output left")
     assert floats_fit(s, "3")
@@ -137,7 +137,7 @@ def test_a_window_carried_to_another_output_enters_at_the_near_edge(session):
     assert (s.shape("10"), s.shape("1")) == ("H[b3 V[b2 b1]]", "a1")
     s.focus("a1")
     s.key("F1")
-    assert (s.shape("10"), s.shape("1")) == ("H[b3 V[b2 b1 a1]]", "-")
+    assert (s.shape("10"), s.shape("1")) == ("H[b3 V[b2 a1 b1]]", "-")
     assert s.focused() == "a1"
 
 
@@ -232,47 +232,41 @@ def test_the_workspace_a_window_leaves_is_put_in_order_in_the_same_step(session)
     assert (s.shape("1", exact=True), s.shape("10")) == ("H[a2 V[a3]]", "H[b1 S[a1]]")
 
 
-@pytest.mark.parametrize("layout, focus, entered, left", [
-    ("wide", "a3", "V[a1 H[b1 a2 a3]]", "V[a1 H[a2 a3]]"),
-    ("wide", "a1", "V[b1 H[a1 a2 a3]]", "V[a1 H[a2 a3]]"),
-    ("centered", "a3", "H[b1 a1 V[a2 a3]]", "H[a3 a1 a2]"),
-    ("grid", "a3", "V[H[a1 a2] H[b1 a3]]", "V[H[a1 a2] a3]"),
-    ("grid", "a2", "V[H[b1 a1] H[a2 a3]]", "V[H[a1 a2] a3]"),
+@pytest.mark.parametrize("layout, mover, entered", [
+    ("wide", "b2", "V[b2 H[a1 a2 a3]]"),
+    ("wide", "b4", "V[a1 H[b4 a2 a3]]"),
+    ("grid", "b2", "V[H[b2 a1] H[a2 a3]]"),
+    ("grid", "b4", "V[H[a1 a2] H[b4 a3]]"),
+    ("master-right", "b2", "H[V[b2 a2 a3] a1]"),
+    ("master-right", "b4", "H[V[a2 a3 b4] a1]"),
+    ("stacking", "b4", "S[a1 a2 a3 b4]"),
 ])
-def test_a_window_carried_into_a_shared_edge_enters_where_sway_puts_it(session, layout, focus, entered, left):
+def test_a_window_carried_to_another_output_goes_on_straight(session, layout, mover, entered):
     s = session("master", workspaces={"1": layout, "10": "master"}, config=CONFIG, outputs=2)
     s.command("workspace 1")
     for title in ("a1", "a2", "a3"):
         s.open(title)
-    s.focus(focus)
     s.command("workspace 10")
-    s.open("b1")
-    s.key("F2")
-    assert s.shape("1") == entered
-    s.key("F1")
-    assert s.shape("1") == left
-
-
-@pytest.mark.parametrize("layout", ["master", "master-right", "wide", "centered", "grid", "dwindle", "spiral", "tabbed-master"])
-@pytest.mark.parametrize("focus", ["a1", "a4"])
-@pytest.mark.parametrize("direction", ["right", "left"])
-def test_landing_finds_the_window_sway_puts_a_moved_window_next_to(session, layout, focus, direction):
-    import re
-    import swaytiles
-    there, here = ("1", "10") if direction == "right" else ("10", "1")
-    s = session("master", workspaces={there: layout, here: "default"}, config=CONFIG, outputs=2)
-    s.command(f"workspace {there}")
-    for title in ("a1", "a2", "a3", "a4"):
+    for title in ("b1", "b2", "b3", "b4"):
         s.open(title)
-    s.focus(focus)
-    s.command(f"workspace {here}")
-    s.open("b1")
-    by = swaytiles.landing(s.workspace(there), direction)
-    s.stop_daemon()
-    s.command(f"[title=^b1$] move {direction}")
-    leaves = re.findall(r"[ab]\d", s.shape(there, exact=True))
-    at = leaves.index("b1")
-    assert s.node(leaves[at + 1 if direction == "right" else at - 1])["id"] == by, leaves
+    s.focus(mover)
+    drawn = s.drawn(lambda: s.key("F2"))
+    assert len(drawn) == 1, drawn
+    assert s.shape("1") == entered
+
+
+def test_a_window_carried_there_and_back_comes_back_to_its_place(session):
+    s = session("master", workspaces={"1": "master", "10": "master"}, config=CONFIG, outputs=2)
+    s.command("workspace 1")
+    s.open("a1")
+    s.command("workspace 10")
+    for title in ("b1", "b2", "b3", "b4"):
+        s.open(title)
+    s.focus("b3")
+    s.key("F2")
+    assert (s.shape("10"), s.shape("1")) == ("H[b1 V[b2 b4]]", "H[b3 a1]")
+    s.key("F1")
+    assert (s.shape("10"), s.shape("1")) == ("H[b1 V[b2 b3 b4]]", "a1")
 
 
 def test_a_window_carried_into_a_workspace_without_a_layout_enters_where_sway_puts_it(session):

@@ -285,21 +285,21 @@ layout:
 2. `exchange` swaps the two in the order and with sway's `swap
    container`, which keeps the sizes.
 3. At the edge, `neighbour` finds the workspace on the next output and
-   the window moves there. It takes one of the places the layout puts
-   at the edge it comes in through (`facing`), the one next to the
-   window sway's own `move` would put it by (`landing`: the near end of
-   a split the way it moves, the focused child of one split across):
-   before it on a move right or down, after it on a move left or up.
-   When that place is not at the edge, it takes the first place there
-   on a move right or down and the last on a move left or up. Moving
-   right into `master` makes it the master; into `wide` the master or
-   the first of the stack, as the focus there was. Into a workspace
-   with no layout the daemon sends sway's own `move`, as many times as
-   it takes to leave the workspace (`presses`), and sway puts it. On a
-   move to a workspace by name or number it joins the end of the stack. A move
-   in a direction takes the focus along, like sway's own. It is recorded
-   as `carried` until the next look at the tree, so it does not keep a
-   drop point.
+   the window moves there, and goes on straight: of the places the
+   layout puts at the edge it comes in through (`facing`), it takes the
+   one whose middle (`middles`, splits taken even) is level with where
+   its middle was on its own screen, as a share of each screen. Moving
+   right into `master` makes it the master, the only place at that edge;
+   into `wide` the master from the upper half, the first of the stack
+   from the lower; into the stack of `master` from the right, the place
+   at its height, so moving it there and back puts it where it was. Two
+   places as near take the near end, as sway's own `move` does. Into a
+   workspace with no layout the daemon sends sway's own `move`, as many
+   times as it takes to leave the workspace (`presses`), and sway puts
+   it. On a move to a workspace by name or number it joins the end of
+   the stack. A move in a direction takes the focus along, like sway's
+   own. It is recorded as `carried` until the next look at the tree, so
+   it does not keep a drop point.
 
 Every window the daemon moves itself goes in one command with all it
 takes to put both workspaces in order, so sway never draws a hole or a
