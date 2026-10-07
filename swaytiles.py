@@ -833,7 +833,8 @@ def facing(node, direction):
 
 def middles(node, along, low=0.0, high=1.0):
     """Where the middle of each window of a layout falls across the
-    workspace, as a share of it, in the splits `along` that way."""
+    workspace, as a share of it, in the splits `along` that way. Tabs and
+    stacked titles all fill the same space."""
     if isinstance(node, int):
         return {node: (low + high) / 2}
     kind, children = node
@@ -1384,7 +1385,7 @@ class Daemon:
         name = workspace["name"]
         ids = [other for other in self.ordered(tiled(workspace)) if other != con]
         layout = self.tiling(name)
-        along = ("splitv", "stacked") if heading in ("left", "right") else ("splith", "tabbed")
+        along = ("splitv",) if heading in ("left", "right") else ("splith",)
 
         def off(place):
             built = normalize(layout([*ids[:place], con, *ids[place:]]))

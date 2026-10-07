@@ -292,8 +292,9 @@ layout:
    right into `master` makes it the master, the only place at that edge;
    into `wide` the master from the upper half, the first of the stack
    from the lower; into the stack of `master` from the right, the place
-   at its height, so moving it there and back puts it where it was. Two
-   places as near take the near end, as sway's own `move` does. Into a
+   at its height, so moving it there and back puts it where it was. Tabs
+   and stacked titles all fill the same space, so into them, as for two
+   places as near, it takes the near end, as sway's own `move` does. Into a
    workspace with no layout the daemon sends sway's own `move`, as many
    times as it takes to leave the workspace (`presses`), and sway puts
    it. On a move to a workspace by name or number it joins the end of

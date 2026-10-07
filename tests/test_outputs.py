@@ -57,7 +57,7 @@ def test_two_outputs(session):
     assert s.shape("3") == "- F[a2 c1]" and floats_fit(s, "3")
     s.focus("c1")
     s.key("F1")
-    assert s.shape("10") == "H[a4 S[b3 c1 b1 b4]]"
+    assert s.shape("10") == "H[a4 S[b3 b1 b4 c1]]"
     s.command("workspace 3")
     s.command("move workspace to output left")
     assert floats_fit(s, "3")
@@ -239,7 +239,8 @@ def test_the_workspace_a_window_leaves_is_put_in_order_in_the_same_step(session)
     ("grid", "b4", "V[H[a1 a2] H[b4 a3]]"),
     ("master-right", "b2", "H[V[b2 a2 a3] a1]"),
     ("master-right", "b4", "H[V[a2 a3 b4] a1]"),
-    ("stacking", "b4", "S[a1 a2 a3 b4]"),
+    ("stacking", "b4", "S[b4 a1 a2 a3]"),
+    ("tabbed", "b4", "T[b4 a1 a2 a3]"),
 ])
 def test_a_window_carried_to_another_output_goes_on_straight(session, layout, mover, entered):
     s = session("master", workspaces={"1": layout, "10": "master"}, config=CONFIG, outputs=2)
