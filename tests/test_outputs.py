@@ -233,9 +233,9 @@ def test_the_workspace_a_window_leaves_is_put_in_order_in_the_same_step(session)
 
 
 @pytest.mark.parametrize("layout, entered, left", [
-    ("wide", "V[a1 H[b1 a2 a3]]", "V[a1 H[a2 a3]]"),
+    ("wide", "V[b1 H[a1 a2 a3]]", "V[a1 H[a2 a3]]"),
     ("centered", "H[b1 a1 V[a2 a3]]", "H[a3 a1 a2]"),
-    ("grid", "V[H[a1 a2] H[b1 a3]]", "V[H[a1 a2] a3]"),
+    ("grid", "V[H[b1 a1] H[a2 a3]]", "V[H[a1 a2] a3]"),
 ])
 def test_a_window_carried_into_a_shared_edge_enters_at_it(session, layout, entered, left):
     s = session("master", workspaces={"1": layout, "10": "master"}, config=CONFIG, outputs=2)

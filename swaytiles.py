@@ -1361,16 +1361,16 @@ class Daemon:
         """The commands that take `con` from wherever it is to its place in
         the layout of `workspace`, in one step, so sway never draws it where
         it would put it first, next to the focused window there. Coming in
-        through an edge, it takes the last place in the order the layout puts
-        at that edge, as sway's own `move` enters at the near edge: the
-        master when it has the edge alone, the first of the stack when they
-        share it. Otherwise it joins the end of the order."""
+        through an edge, it takes one of the places the layout puts at that
+        edge, by sway's own rule for `move`: the first of them on a move
+        right or down, the last on a move left or up. Otherwise it joins
+        the end of the order."""
         name = workspace["name"]
         ids = [other for other in self.ordered(tiled(workspace)) if other != con]
         layout = self.tiling(name)
         places = range(len(ids) + 1) if heading and layout else ()
-        at = max((place for place in places
-                  if con in facing(normalize(layout([*ids[:place], con, *ids[place:]])), heading)), default=len(ids))
+        edge = [place for place in places if con in facing(normalize(layout([*ids[:place], con, *ids[place:]])), heading)]
+        at = (min if heading in ("right", "down") else max)(edge, default=len(ids))
         self.order[:] = [other for other in self.order if other != con]
         self.order.insert(self.order.index(ids[at]) if at < len(ids) else len(self.order), con)
         if not ids or layout is None or covered(workspace):

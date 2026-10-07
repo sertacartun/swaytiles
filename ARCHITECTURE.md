@@ -285,12 +285,14 @@ layout:
 2. `exchange` swaps the two in the order and with sway's `swap
    container`, which keeps the sizes.
 3. At the edge, `neighbour` finds the workspace on the next output and
-   the window moves there. It takes the last place in the order the
-   layout puts at the edge it comes in through (`facing`), as sway's own
-   `move` enters at the near edge: moving right into `master` makes it
-   the master, into `wide` the first of the stack, below the master.
-   When no place touches that edge, and on a move to a workspace by name
-   or number, it joins the end of the stack. A move
+   the window moves there. Of the places the layout puts at the edge it
+   comes in through (`facing`), it takes the first on a move right or
+   down and the last on a move left or up: sway's own rule for `move`
+   into an output, applied to the layout. Moving right into `master` or
+   `wide` makes it the master, into `centered` the top of the left
+   column, into `grid` the top left; moving left into them puts it at
+   the end. On a move to a workspace by name or number it joins the end
+   of the stack. A move
    in a direction takes the focus along, like sway's own. It is recorded
    as `carried` until the next look at the tree, so it does not keep a
    drop point.
