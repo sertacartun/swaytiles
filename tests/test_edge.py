@@ -377,3 +377,22 @@ def test_the_master_keeps_its_size_down_to_one_window_and_back(session):
     s.settle()
     assert s.shape() == "H[w1 w4]"
     assert s.width("w1") == 0.7
+
+
+def test_a_master_resized_without_an_event_keeps_its_size_as_a_window_comes_in(session):
+    # sway reports nothing for a resize by the mouse or by swaymsg: the daemon
+    # reads it while it watches after a focus change, before the next window.
+    s = session("centered")
+    opened(s, 2)
+    s.focus("w1")
+    s.command("[title=^w1$] resize set width 70 ppt")
+    s.wait(lambda: False, 0.6)
+    os.kill(s.daemon.pid, signal.SIGSTOP)
+    try:
+        s.open("w3", settle=False)
+        s.wait(lambda: False, 0.2)
+        assert s.width("w1") == 0.7
+    finally:
+        os.kill(s.daemon.pid, signal.SIGCONT)
+    s.settle()
+    assert s.width("w1") == 0.7

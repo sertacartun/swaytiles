@@ -213,7 +213,11 @@ and every arrangement that matches the target, and `farewell` reads it
 from the close event of the master, so the next master takes the same
 size. A window sway has just put next to the master took its room from
 all of them alike, so `measure` reads the share from the room the others
-have, and a lone master keeps the share it had.
+have, and a lone master keeps the share it had. sway reports nothing
+for a resize by the mouse or by `swaymsg`, so while the daemon watches
+the tree after a focus change (see below) it reads the share too
+(`remeasure`), and points the tile rule at a share that changed, so the
+next window does not bring back the old one.
 
 ## The model of sway
 
@@ -380,7 +384,7 @@ file, so `drawn` can count the transactions an action costs.
 
 | File | Covers |
 | --- | --- |
-| `test_pure.py` | the layout arithmetic, without sway |
+| `test_pure.py` | the layout arithmetic and the model of sway, without sway |
 | `test_layouts.py` | every layout while windows open, close and switch |
 | `test_manual.py` | changes made by hand, letting a workspace go, the menu and the config command |
 | `test_drag.py` | mouse drags, through a virtual pointer (`tests/pointer.py`) |

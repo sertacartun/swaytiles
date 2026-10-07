@@ -1017,6 +1017,15 @@ class Daemon:
             if ids and trimmed(shape(workspace)) == self.target(name, ids):
                 self.measure(workspace, ids)
 
+    def remeasure(self, tree):
+        """Read the masters' sizes again, where no event says they changed,
+        and point the tile rules at a size that did, so the next window
+        does not bring back the old one."""
+        before = dict(self.ratios)
+        self.measure_all(tree)
+        if self.ratios != before:
+            self.sway.command(*self.anchors(tree, {ws["id"]: tiled(ws) for ws in workspaces(tree)}))
+
     def sizing(self, name, target, ids):
         """The axis and the share in ppt the master `ids[0]` takes in `target`, if it has a saved one."""
         ratio = self.ratios.get(name)
@@ -1511,9 +1520,11 @@ class Daemon:
     def handle(self, kind, event):
         change = event.get("change")
         if kind == "idle":
-            if self.drifted(self.sway.tree()):
+            if self.drifted(tree := self.sway.tree()):
                 self.watching = 0.0
                 self.arrange()
+            else:
+                self.remeasure(tree)
         elif kind == "tick":
             payload = event.get("payload", "")
             if payload == f"{SYNC} {self.syncing}":
@@ -1532,11 +1543,11 @@ class Daemon:
                 self.arrange()
             elif following(command):
                 self.learn(event["binding"], command)
-                self.measure_all(self.sway.tree())
+                self.remeasure(self.sway.tree())
             elif self.drifted(tree := self.sway.tree()):
                 self.arrange()
             else:
-                self.measure_all(tree)
+                self.remeasure(tree)
         elif kind == "output":
             self.arrange()
         elif kind == "workspace" and change == "focus":
