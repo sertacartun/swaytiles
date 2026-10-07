@@ -10,16 +10,24 @@ import swaytiles
 TILING = [name for name, layout in swaytiles.LAYOUTS.items() if layout is not None and name != "float"]
 
 
+def unwrapped(s, name="1"):
+    """No container only holds the workspace's windows: the layout starts right under the workspace."""
+    workspace = s.workspace(name)
+    return workspace is not None and not swaytiles.wrapped(workspace) and workspace["layout"] not in swaytiles.TABBED
+
+
 @pytest.mark.parametrize("layout", TILING)
 def test_windows_opening_and_closing(session, layout):
     s = session(layout)
     for count in range(1, 6):
         s.open(f"w{count}")
         assert s.shape() == expected(layout, count), f"after opening w{count}"
+        assert unwrapped(s), s.shape(exact=True)
     s.close("w3")
     assert s.shape() == expected(layout, 4, ["w1", "w2", "w4", "w5"])
     s.close("w1")
     assert s.shape() == expected(layout, 3, ["w2", "w4", "w5"])
+    assert unwrapped(s), s.shape(exact=True)
     assert s.alive
 
 
@@ -47,6 +55,8 @@ def test_switching_between_every_pair_of_layouts(session):
             assert s.shape() == "- F[w1 w2 w3 w4]", f"{previous} -> {layout}"
         elif layout != "default":
             assert s.shape() == expected(layout, 4), f"{previous} -> {layout}"
+        if layout != "float":
+            assert unwrapped(s), f"{previous} -> {layout}: {s.shape(exact=True)}"
         assert s.chosen() == layout
     assert s.alive
 

@@ -364,10 +364,6 @@ def shape(node):
     return node["id"] if not node["nodes"] else (node["layout"], [shape(child) for child in node["nodes"]])
 
 
-def descendants(node):
-    return [con for child in node["nodes"] for con in (child["id"], *descendants(child))]
-
-
 def containers(node):
     return [found for child in node["nodes"] if child["nodes"] for found in (child, *containers(child))]
 
@@ -485,16 +481,88 @@ def quoted(name):
     return '"' + name.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
-def build(node, root=True):
+def build(node):
+    """The commands that make the container `node` around its first window,
+    which stands where the container goes, with the others right after it."""
     if isinstance(node, int):
         return []
     layout, children = node
     first = leaves(node)[0]
-    commands = [] if root else [f"[con_id={first}] split h"]
-    commands += [f"[con_id={first}] {layout_command(layout)}", f"[con_id={first}] mark --add {MARK}"]
+    commands = [f"[con_id={first}] split h", f"[con_id={first}] {layout_command(layout)}", f"[con_id={first}] mark --add {MARK}"]
     commands += [f"[con_id={leaves(child)[0]}] move to mark {MARK}" for child in reversed(children[1:])]
     commands.append(f"[con_id={first}] unmark {MARK}")
-    return commands + [command for child in children for command in build(child, False)]
+    return commands + [command for child in children for command in build(child)]
+
+
+def family(layout):
+    return "h" if layout in ("splith", "tabbed") else "v" if layout in ("splitv", "stacked") else None
+
+
+def turns(current, wanted):
+    """The moves of a window right under the workspace that turn the
+    workspace's own layout from `current` into the split `wanted`. Each move
+    is across the workspace, so sway puts the window first and sets the
+    workspace to the move's orientation (workspace_rejigger), without
+    changing the focus or leaving the output."""
+    if current == wanted:
+        return []
+    across = "up" if family(current) == "h" else "left"
+    if family(wanted) != family(current):
+        return [across]
+    return [across, "left" if family(wanted) == "h" else "up"]
+
+
+def wrapped(workspace):
+    """Whether the workspace holds its windows in a split container of its own,
+    which only takes room in the tree: the layout is the same without it."""
+    nodes = workspace["nodes"]
+    return len(nodes) == 1 and bool(nodes[0]["nodes"]) and nodes[0]["layout"] not in TABBED
+
+
+def assemble(workspace, target, focused=None):
+    """The commands that build `target` right under the workspace, in one
+    transaction and without moving the focus. A layout command on a window
+    right under the workspace wraps the workspace's windows in a new
+    container, so the workspace's own layout is turned by moves instead, and
+    a tabbed or stacked layout is one container. Windows are gathered with
+    `move to mark`, which leaves the containers they were in empty, and sway
+    removes them."""
+    if covered(workspace):
+        return None
+    ids = leaves(target)
+    first, rest = ids[0], ids[1:]
+    layout = workspace["layout"]
+    root = (layout if layout not in TABBED else "splith") if isinstance(target, int) else target[0]
+    direct = [node["id"] for node in workspace["nodes"] if not node["nodes"]]
+    commands = []
+    if direct and first not in direct:
+        commands += after(direct[0], first)
+    elif not direct:
+        # Every window is in a container: gather them in the first one and
+        # take the first window out of it, in front of it.
+        holder = workspace["nodes"][0]
+        commands += [f"[con_id={holder['id']}] mark --add {MARK}"]
+        commands += [f"[con_id={con}] move to mark {MARK}" for con in ids]
+        commands.append(f"[con_id={holder['id']}] unmark {MARK}")
+        if not rest:
+            # `split none` also arranges the workspace; `layout` would leave the
+            # window with the geometry of the container it was in.
+            commands.append(f"[con_id={first}] split none")
+        else:
+            commands.append(f"[con_id={first}] move {'left' if family(holder['layout']) == 'h' else 'up'}")
+            if family(layout) != family(holder["layout"]):
+                layout = "splith" if family(holder["layout"]) == "h" else "splitv"
+    wanted = root if root not in TABBED else layout if layout not in TABBED else "splith"
+    commands += [f"[con_id={first}] move {direction}" for direction in turns(layout, wanted)]
+    if rest:
+        commands += [f"[con_id={first}] mark --add {MARK}"]
+        commands += [f"[con_id={con}] move to mark {MARK}" for con in reversed(rest)]
+        commands.append(f"[con_id={first}] unmark {MARK}")
+    if root in TABBED:
+        commands.append(f"[con_id={first}] {layout_command(root)}")
+    if not isinstance(target, int):
+        commands += [command for child in target[1] for command in build(child)]
+    return commands + ([refocus(focused)] if focused in ids else [])
 
 
 def after(anchor, con):
@@ -524,7 +592,7 @@ def placing(workspace, target, new, focused):
     follower = grand[1][1] if grand and grand[1][0] == parent else None
     swapped = isinstance(follower, int)
     holders = [node["id"] for node in ancestors(workspace, anchor)[1:-1]] if isinstance(anchor, int) else []
-    if (siblings or swapped) and not holders:
+    if (siblings or swapped) and not holders and (not isinstance(anchor, int) or workspace["layout"] != layout):
         return None
     parked = (siblings or swapped) and focused in leaves(target)
     commands = [f"[con_id={new}] swap container with con_id {follower}"] if swapped else []
@@ -546,7 +614,7 @@ def insert(sway, workspace, target, new, focused):
 
 def tidy(sway, workspace, target, new):
     wanted = {leaf: layout for layout, (leaf,) in singles(target)}
-    nested = [node for top in workspace["nodes"] for node in containers(top)]
+    nested = containers(workspace)
     parents = {child["id"]: node for node in [workspace, *containers(workspace)] for child in node["nodes"]}
     commands = [f"[con_id={node['nodes'][0]['id']}] split none" for node in nested
                 if len(node["nodes"]) == 1 and node["layout"] not in TABBED
@@ -567,6 +635,9 @@ def relabel(node, target):
         return [] if not node["nodes"] and node["id"] == target else None
     layout, children = target
     if len(node["nodes"]) != len(children):
+        return None
+    if node["type"] == "workspace" and node["layout"] != layout:
+        # `layout` on a window right under the workspace wraps the windows.
         return None
     found = [relabel(child, part) for child, part in zip(node["nodes"], children, strict=True)]
     if None in found:
@@ -601,40 +672,28 @@ def restyle(sway, workspace, target):
 
 
 def rearrange(sway, workspace, target, focused):
-    if isinstance(target, int):
-        # A lone window keeps the geometry of the tabs it was in when `layout`
-        # only flattens its parent: sway arranges the workspace only when the
-        # layout changes. `split none` flattens and arranges.
-        parent = ancestors(workspace, target)[-2]
-        alone = parent["type"] == "con" and len(parent["nodes"]) == 1
-        return sway.command(f"[con_id={target}] {'split none' if alone else 'layout splith'}")
-    if len(target[1]) == 1:
-        return sway.command(f"[con_id={target[1][0]}] {layout_command(target[0])}")
-    if all(not node["nodes"] for node in workspace["nodes"]):
-        sway.command(f"[con_id={workspace['nodes'][0]['id']}] split h")
-        workspace = current(sway, workspace["id"])
-    sway.command(*rebuilding(workspace, target, focused))
+    sway.command(*(assemble(workspace, target, focused) or []))
 
 
-def rebuilding(workspace, target, focused):
-    """The commands that gather the windows in a container of the workspace
-    and build `target` from them, or None if it has no container."""
-    root = next((node["id"] for node in workspace["nodes"] if node["nodes"]), None)
-    if root is None:
-        return None
-    commands = [f"[con_id={root}] mark --add {MARK}"]
-    commands += [f"[con_id={leaf}] move to mark {MARK}" for leaf in leaves(target)]
-    commands += [f"[con_id={root}] unmark {MARK}", *build(target)]
-    return commands + ([refocus(focused)] if focused in leaves(target) else [])
-
-
-def settling(workspace, target, con):
-    """The commands that take `con`, put just after the workspace's last
-    window, to its place in `target`."""
-    steps = placing(workspace, target, con, con) or rebuilding(workspace, target, con)
-    if steps is None and all(not node["nodes"] for node in workspace["nodes"]):
-        steps = build(target)
+def settling(workspace, target, con, anchor):
+    """The commands that take `con`, put just after `anchor` on the workspace,
+    to its place in `target`."""
+    steps = placing(workspace, target, con, con)
+    if steps is None:
+        steps = assemble(arrived(workspace, con, anchor), target, con)
     return steps or []
+
+
+def arrived(workspace, con, anchor):
+    """The workspace as sway has it once `con` is put just after `anchor`."""
+    def copy(node):
+        nodes = [copy(child) for child in node["nodes"]]
+        for index, child in enumerate(nodes):
+            if child["id"] == anchor:
+                nodes.insert(index + 1, {"id": con, "type": "con", "layout": "none", "nodes": [], "floating_nodes": []})
+                break
+        return {**node, "nodes": nodes}
+    return copy(workspace)
 
 
 def conforming(layout, present):
@@ -717,9 +776,6 @@ def presses(workspace, con, direction):
         copy["nodes"] = [model(child, copy) for child in node["nodes"]]
         found.update({node["id"]: copy})
         return copy
-
-    def family(layout):
-        return "h" if layout in ("splith", "tabbed") else "v" if layout in ("splitv", "stacked") else None
 
     def squash_children(node):
         index = 0
@@ -1137,14 +1193,14 @@ class Daemon:
     def shape_up(self, workspace, ids, new, focused):
         name = workspace["name"]
         target = self.target(name, ids)
-        if target is None or target == trimmed(shape(workspace)):
+        if target is None or (target == trimmed(shape(workspace)) and not wrapped(workspace)):
             return False
         reference = trimmed(without(target, new)) if new in ids else target
         present = trimmed(without(shape(workspace), new))
         if reference != present and loose(reference) == loose(present):
             workspace = tidy(self.sway, workspace, reference, new)
-        if (trimmed(shape(workspace)) != target and not restyle(self.sway, workspace, target)
-                and (new not in ids or not insert(self.sway, workspace, target, new, focused))):
+        if wrapped(workspace) or (trimmed(shape(workspace)) != target and not restyle(self.sway, workspace, target)
+                                  and (new not in ids or not insert(self.sway, workspace, target, new, focused))):
             rearrange(self.sway, current(self.sway, workspace["id"]), target, focused)
         self.sway.command(*self.resize(name, target, ids))
         return True
@@ -1159,10 +1215,6 @@ class Daemon:
         if skip:
             return self.remember()
         tree = self.release(tree, new, moved and arrived is not None)
-        if unstack := [command for ws in workspaces(tree) if self.tiling(ws["name"]) is not None
-                       for command in unstacking(ws, focused_node(tree))]:
-            self.sway.command(*unstack)
-            tree = self.sway.tree()
         tiles = {ws["id"]: tiled(ws) for ws in workspaces(tree)}
         self.kept = {con: ws["name"] for ws in workspaces(tree) for con in tiles[ws["id"]]
                      if self.kept.get(con) == ws["name"] and self.chosen(ws["name"]) == "float"}
@@ -1261,7 +1313,7 @@ class Daemon:
         leads = bool(heading) and facing(normalize(layout([con, *ids])), heading) == [con]
         order = [con, *ids] if leads else [*ids, con]
         target = self.target(name, order)
-        return after(ids[-1], con) + settling(destination, target, con) + self.resize(name, target, order)
+        return after(ids[-1], con) + settling(destination, target, con, ids[-1]) + self.resize(name, target, order)
 
     def unhide(self, con=None):
         """Bring a window back from the scratchpad, the last one hidden unless
@@ -1289,7 +1341,7 @@ class Daemon:
             if ids and self.tiling(name) is not None and not covered(workspace):
                 self.order[:] = [c for c in self.order if c != con] + [con]
                 target = self.target(name, [*ids, con])
-                commands += after(ids[-1], con) + settling(workspace, target, con) + self.resize(name, target, [*ids, con])
+                commands += after(ids[-1], con) + settling(workspace, target, con, ids[-1]) + self.resize(name, target, [*ids, con])
         self.where[con] = name
         self.sway.command(*commands, f"[con_id={con}] focus")
         self.record(self.sway.tree())
@@ -1347,8 +1399,8 @@ class Daemon:
         if choice == "default":
             tree = self.sway.tree()
             workspace = next(ws for ws in workspaces(tree) if ws["name"] == name)
-            self.sway.command(*unstacking(workspace, focused_node(tree)),
-                              *(f"[con_id={con}] layout splith" for con in descendants(workspace)))
+            ids, focused = tiled(workspace), focused_node(tree)
+            self.sway.command(*(assemble(workspace, ("splith", ids), focused["id"]) if ids else unstacking(workspace, focused)) or [])
         self.arrange()
 
     def rename(self, workspace):

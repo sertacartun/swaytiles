@@ -335,3 +335,14 @@ def test_default_undoes_a_stacked_workspace(session):
     s.open("w3")
     assert s.shape() == "H[w1 w2 w3]"
     assert s.focused() == "w3"
+
+
+def test_a_workspace_built_in_a_container_is_rebuilt_without_it(session):
+    s = session("master")
+    opened(s, 3)
+    s.stop_daemon()
+    s.command("[title=^w1$] layout splitv; [title=^w1$] layout splith")
+    assert s.shape(exact=True) == "H[H[w1 V[w2 w3]]]"
+    s.start_daemon()
+    assert s.wait(lambda: s.shape(exact=True) == "H[w1 V[w2 w3]]"), s.shape(exact=True)
+    assert s.focused() == "w3"
