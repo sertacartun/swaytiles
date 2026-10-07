@@ -25,6 +25,8 @@ def test_a_broken_state_file_is_repaired(session):
     assert state["workspaces"]["1"] == "master"
     assert state["workspaces"]["2"] == "spiral"
     s.stop_daemon()
+    # Nothing can be read: every workspace starts over as default.
+    s.releasing = True
     s.state_file.write_text("not json")
     s.start_daemon()
     s.open("w2")

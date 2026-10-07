@@ -25,6 +25,8 @@ AFTER = "_layout_after_"
 SIZED = "_layout_sized_"
 SWAP = "_layout_swap_"
 RESWAP = "_layout_reswap_"
+# The marks that point the tile rule at the place of the next window.
+PLACING = (AFTER, SIZED, SWAP, RESWAP)
 NEXT = 0
 SYNC = "layout:sync"
 ACT = "layout:act"
@@ -37,7 +39,6 @@ CASCADE = 40
 WATCH = (0.2, 4.0)
 TABBED = ("tabbed", "stacked")
 SPLITS = {"right": "splith", "down": "splitv", "left": "splith", "up": "splitv"}
-PARALLEL = {"left": ("splith", "tabbed"), "right": ("splith", "tabbed"), "up": ("splitv", "stacked"), "down": ("splitv", "stacked")}
 EVENTS = {0: "workspace", 1: "output", 3: "window", 5: "binding", 6: "shutdown", 7: "tick"}
 SUBSCRIPTIONS = ["window", "tick", "workspace", "binding", "output", "shutdown"]
 FOCUSING = re.compile(r"focus (left|right|up|down)")
@@ -482,6 +483,12 @@ def focused_node(tree):
     return node
 
 
+def focused_window(tree):
+    """The focused node and the workspace it is a window of, if any."""
+    node = focused_node(tree)
+    return node, next((ws for ws in workspaces(tree) if node in windows(ws)), None)
+
+
 def invisible(tree):
     return [node["id"] for ws in workspaces(tree) for node in ws["floating_nodes"] if node.get("opacity") == 0]
 
@@ -673,21 +680,6 @@ def relabel(node, target):
         return None
     commands = [] if node["layout"] == layout else [f"[con_id={node['nodes'][0]['id']}] {layout_command(layout)}"]
     return commands + [command for part in found for command in part]
-
-
-def unstacking(workspace, focused):
-    """The commands that turn a tabbed or stacked workspace back into a split one.
-    sway changes the workspace's own layout only while the workspace itself has
-    focus; `layout` on a window right under it wraps the windows in a new
-    container and leaves the workspace as it was."""
-    if workspace["layout"] not in TABBED or covered(workspace):
-        return []
-    if focused["id"] == workspace["id"]:
-        return ["layout splith"]
-    if not workspace["nodes"]:
-        return []
-    back = f"[con_id={focused['id']}] focus" if focused["type"] != "workspace" else f"workspace {quoted(focused['name'])}"
-    return [f"[con_id={workspace['nodes'][0]['id']}] focus", "focus parent", "layout splith", back]
 
 
 def restyle(sway, workspace, target, extra=()):
@@ -886,21 +878,6 @@ def resolve(tree, target):
     return found[0] if found else None
 
 
-def crosses(workspace, con, direction):
-    path = ancestors(workspace, con)
-    chain = path[:-1]
-    while len(chain) > 1 and len(chain[0]["nodes"]) == 1:
-        chain.pop(0)
-    while len(chain) > 1 and len(chain[-1]["nodes"]) == 1:
-        chain.pop()
-    top = chain[0]
-    if len(chain) != 1 or top["layout"] not in PARALLEL[direction]:
-        return False
-    ids = [child["id"] for child in top["nodes"]]
-    index = ids.index(path[path.index(top) + 1]["id"])
-    return index == (len(ids) - 1 if direction in ("right", "down") else 0)
-
-
 def presses(workspace, con, direction):
     """How many of sway's own `move <direction>` take `con` to the next
     output, or None if one would move it inside the workspace. A window at
@@ -908,7 +885,7 @@ def presses(workspace, con, direction):
     when the container only wraps the workspace's windows. This follows
     container_move_in_direction in sway/commands/move.c."""
     def model(node, parent):
-        copy = {"layout": node["layout"], "parent": parent}
+        copy = {"id": node["id"], "layout": node["layout"], "parent": parent}
         copy["nodes"] = [model(child, copy) for child in node["nodes"]]
         found.update({node["id"]: copy})
         return copy
@@ -1108,11 +1085,8 @@ class Daemon:
     def chosen(self, name):
         return self.state["workspaces"].get(name)
 
-    def chosen_tiling(self, name):
-        return None if self.chosen(name) == "float" else LAYOUTS.get(self.chosen(name))
-
     def tiling(self, name):
-        return self.chosen_tiling(name)
+        return None if self.chosen(name) == "float" else LAYOUTS.get(self.chosen(name))
 
     def ordered(self, cons):
         cons = set(cons)
@@ -1267,7 +1241,7 @@ class Daemon:
 
     def anchors(self, tree, tiles):
         """Point the tile rule of every workspace at the place of its next window."""
-        held = marked(tree, AFTER) | marked(tree, SIZED) | marked(tree, SWAP) | marked(tree, RESWAP)
+        held = marked(tree, PLACING)
         wanted, commands = {}, []
         for ws in workspaces(tree):
             name = ws["name"]
@@ -1372,6 +1346,16 @@ class Daemon:
         for args in hidden:
             threading.Thread(target=self.reveal, args=args, daemon=True).start()
 
+    def cascading(self, workspace):
+        """The place in the cascade of a window coming to a float workspace,
+        and the commands that point its float rule at the place after it."""
+        name, area = workspace["name"], workspace["rect"]
+        taken = {origin(node) for node in workspace["floating_nodes"]}
+        slot = free_slot(area, taken, self.slots.get(name, 0))
+        geometry = cascade(area, slot)
+        self.slots[name] = free_slot(area, taken | {geometry[2:]}, slot + 1)
+        return geometry, self.float_rule(name, cascade(area, self.slots[name]))
+
     def placed(self, tree, new, moved):
         where = {node["id"]: ws["name"] for ws in workspaces(tree) for node in windows(ws)}
         local = moved and new in where and self.where.get(new) == where[new]
@@ -1453,7 +1437,7 @@ class Daemon:
         self.order += [con for ids in tiles.values() for con in ids if con not in self.order]
         for workspace in workspaces(tree):
             name = workspace["name"]
-            if covered(workspace) or self.chosen_tiling(name) is None:
+            if covered(workspace) or self.tiling(name) is None:
                 continue
             if ids := self.ordered(tiles[workspace["id"]]):
                 self.inspect(workspace, ids, arrived)
@@ -1484,15 +1468,14 @@ class Daemon:
     def record(self, tree):
         for workspace in workspaces(tree):
             name = workspace["name"]
-            if self.chosen_tiling(name) is None or not tiled(workspace):
+            if self.tiling(name) is None or not tiled(workspace):
                 self.built.pop(name, None)
             elif not covered(workspace):
                 self.built[name] = trimmed(shape(workspace))
 
     def move_to(self, target=None, direction=None):
         tree = self.sway.tree()
-        node = focused_node(tree)
-        source = next((ws for ws in workspaces(tree) if node in windows(ws)), None)
+        node, source = focused_window(tree)
         native = f"move container to workspace {target}" if target else f"move {direction}"
         if source is None or node["nodes"]:
             return self.sway.command(native)
@@ -1507,26 +1490,22 @@ class Daemon:
             if destination is None:
                 return None
         elif direction:
-            crossing = floated or (node["type"] == "con" and crosses(source, con, direction))
+            crossing = floated or (node["type"] == "con" and presses(source, con, direction) is not None)
             destination = neighbour(tree, source, direction) if crossing else None
         else:
             destination = resolve(tree, target)
         if destination is None or destination["id"] == source["id"]:
             return self.sway.command(f"[con_id={con}] {native}")
-        name, area = destination["name"], destination["rect"]
+        name = destination["name"]
         away = self.leaving(source, node) if managed else []
         self.carried = (con, name, direction)
         command = native if target else f"move container to workspace {quoted(name)}, focus"
         floats = self.state["workspaces"].get(name, self.state["layout"]) == "float"
         if floats and name in visible(tree):
-            taken = {origin(other) for other in destination["floating_nodes"]}
-            slot = free_slot(area, taken, self.slots.get(name, 0))
-            geometry = cascade(area, slot)
-            self.slots[name] = free_slot(area, taken | {geometry[2:]}, slot + 1)
+            geometry, rule = self.cascading(destination)
             self.where[con] = name
             self.sway.command(f"[con_id={con}] floating enable, mark --add {FLOATED}{con}, resize set {geometry[0]} px {geometry[1]} px, "
-                              f"{command}, move absolute position {geometry[2]} px {geometry[3]} px",
-                              *away, *self.float_rule(name, cascade(area, self.slots[name])))
+                              f"{command}, move absolute position {geometry[2]} px {geometry[3]} px", *away, *rule)
             self.insist(f"[con_id={con}] {placement(*geometry)}")
         elif floated and not floats:
             self.sway.command(f"[con_id={con}] unmark {FLOATED}{con}, floating disable, {command}")
@@ -1577,8 +1556,7 @@ class Daemon:
     def hide(self):
         """`move scratchpad`, with the workspace left behind put in order in the same step."""
         tree = self.sway.tree()
-        node = focused_node(tree)
-        source = next((ws for ws in workspaces(tree) if node in windows(ws)), None)
+        node, source = focused_window(tree)
         if source is None or node["nodes"]:
             return self.sway.command("move scratchpad")
         self.sway.command(f"[con_id={node['id']}] move scratchpad", *self.leaving(source, node))
@@ -1589,8 +1567,7 @@ class Daemon:
         workspace it leaves is put in order, or it takes the place of a new
         window, in the same step."""
         tree = self.sway.tree()
-        node = focused_node(tree)
-        source = next((ws for ws in workspaces(tree) if node in windows(ws)), None)
+        node, source = focused_window(tree)
         floating = node["type"] == "floating_con"
         if source is None or node["nodes"] or floating == (not floating if mode == "toggle" else mode == "enable"):
             return self.sway.command(f"floating {mode}")
@@ -1615,12 +1592,8 @@ class Daemon:
         workspace = next(ws for ws in workspaces(tree) if ws["name"] == name)
         commands = [f"[con_id={con}] scratchpad show"]
         if self.chosen(name) == "float":
-            area = workspace["rect"]
-            taken = {origin(node) for node in workspace["floating_nodes"]}
-            slot = free_slot(area, taken, self.slots.get(name, 0))
-            geometry = cascade(area, slot)
-            self.slots[name] = free_slot(area, taken | {geometry[2:]}, slot + 1)
-            commands += [f"[con_id={con}] mark --add {FLOATED}{con}, {placement(*geometry)}", *self.float_rule(name, cascade(area, self.slots[name]))]
+            geometry, rule = self.cascading(workspace)
+            commands += [f"[con_id={con}] mark --add {FLOATED}{con}, {placement(*geometry)}", *rule]
         else:
             commands += [f"[con_id={con}] floating disable", *self.joining(workspace, con)]
         self.where[con] = name
@@ -1680,8 +1653,8 @@ class Daemon:
         if choice == "default":
             tree = self.sway.tree()
             workspace = next(ws for ws in workspaces(tree) if ws["name"] == name)
-            ids, focused = tiled(workspace), focused_node(tree)
-            self.sway.command(*(assemble(workspace, ("splith", ids), focused["id"]) if ids else unstacking(workspace, focused)) or [])
+            if ids := tiled(workspace):
+                self.sway.command(*(assemble(workspace, ("splith", ids), focused_node(tree)["id"]) or []))
         self.arrange()
 
     def rename(self, workspace):
@@ -1698,7 +1671,7 @@ class Daemon:
         tree = sway.tree()
         commands = [command for name in list(self.rules) for command in self.float_rule(name, None)]
         commands += [command for name in list(self.anchored) for command in self.tile_rule(name, False)]
-        marks = [*marked(tree, AFTER), *marked(tree, SIZED), *marked(tree, SWAP), *marked(tree, RESWAP)]
+        marks = marked(tree, PLACING)
         sway.command(*commands, *(f"[con_id={con}] opacity 1" for con in invisible(tree)), *(f"unmark {mark}" for mark in marks))
 
     def recover(self):
@@ -1821,7 +1794,7 @@ class Daemon:
             save_state(self.state)
         elif action.startswith("move ") and action[5:].strip():
             argument = action[5:].strip()
-            self.move_to(direction=argument) if argument in PARALLEL else self.move_to(target=argument)
+            self.move_to(direction=argument) if argument in SPLITS else self.move_to(target=argument)
 
     def run(self):
         events = self.sway.subscribe(SUBSCRIPTIONS, self.pause)
@@ -2023,24 +1996,21 @@ def picked_layout(output, names):
     return name if name in names else None
 
 
-def notify(message):
-    """Show `message` as a desktop notification, without waiting for it."""
+def notify(message, wait=False):
+    """Show `message` as a desktop notification, without waiting for it
+    unless the process is about to end."""
     import shutil
     import subprocess
     def send():
         with contextlib.suppress(OSError, subprocess.SubprocessError):
             subprocess.run(["notify-send", "swaytiles", message], capture_output=True, timeout=5)
     if shutil.which("notify-send"):
-        threading.Thread(target=send, daemon=True).start()
+        send() if wait else threading.Thread(target=send, daemon=True).start()
 
 
 def warn(message):
-    import shutil
-    import subprocess
     print(f"swaytiles: {message}", file=sys.stderr)
-    if shutil.which("notify-send"):
-        with contextlib.suppress(OSError, subprocess.SubprocessError):
-            subprocess.run(["notify-send", "swaytiles", message], capture_output=True, timeout=5)
+    notify(message, wait=True)
 
 
 def menu(sway, custom):
@@ -2095,7 +2065,7 @@ def cli():
             return act(Sway(), "master")
         if arguments[0] == "show" and (len(arguments) == 1 or (len(arguments) == 2 and arguments[1].isdigit())):
             return act(Sway(), " ".join(arguments))
-        if arguments[0] == "move" and (arguments[1:] in ([name] for name in PARALLEL) or (arguments[1:2] == ["number"] and len(arguments) == 3)):
+        if arguments[0] == "move" and (arguments[1:] in ([name] for name in SPLITS) or (arguments[1:2] == ["number"] and len(arguments) == 3)):
             return act(Sway(), " ".join(arguments))
         if len(arguments) == 1 and RENAMED.get(arguments[0], arguments[0]) in LAYOUTS:
             return select(Sway(), arguments[0])

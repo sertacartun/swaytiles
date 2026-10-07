@@ -142,3 +142,16 @@ def test_the_side_a_move_comes_in_through():
     assert facing("tabbed-master", "left") == [2, 3]
     assert facing("centered", "right") == [3]
     assert sl.facing(sl.normalize(sl.LAYOUTS["master"]([1])), "left") == [1]
+
+
+def test_presses_counts_the_moves_that_leave_the_workspace():
+    def con(id_, layout="none", *nodes):
+        return {"id": id_, "type": "con" if id_ > 1 else "workspace", "layout": layout, "nodes": list(nodes), "floating_nodes": []}
+    side_by_side = con(1, "splith", con(2), con(3))
+    assert sl.presses(side_by_side, 3, "right") == 1
+    assert sl.presses(side_by_side, 2, "left") == 1
+    assert sl.presses(side_by_side, 2, "right") is None
+    nested = con(1, "splith", con(2), con(4, "splitv", con(5), con(6)))
+    # It leaves its column first.
+    assert sl.presses(nested, 6, "right") == 2
+    assert sl.presses(nested, 6, "up") is None
