@@ -281,29 +281,32 @@ layout:
 2. `exchange` swaps the two in the order and with sway's `swap
    container`, which keeps the sizes.
 3. At the edge, `neighbour` finds the workspace on the next output and
-   the window moves there by name. It is recorded as `carried`, until the
-   next look at the tree, so it
-   does not keep a drop point. If the layout gives the edge it comes in
+   the window moves there. If the layout gives the edge it comes in
    through to the master alone (`facing`), it becomes the master, as
    sway's own `move` enters at the near edge: moving right into
    `master` makes it the master. Otherwise, and on a move to a
    workspace by name or number, it joins the end of the stack. A move
-   in a direction takes the focus along, like sway's own.
+   in a direction takes the focus along, like sway's own. It is recorded
+   as `carried` until the next look at the tree, so it does not keep a
+   drop point.
 
-A window that leaves a workspace's layout leaves a hole sway would draw
-before the daemon fills it. So wherever the daemon takes the window away
-itself, `leaving` adds the steps that put the others in order, worked
-out on the model of the workspace without the window, to the same command: a move
-to another workspace, `nop layout hide` (`move scratchpad`) and `nop
-layout float` (`floating toggle`). A window floated back takes the place
-of a new one in the same command (`joining`). A window closed or moved
-by sway itself still shows one frame with the hole.
+Every window the daemon moves itself goes in one command with all it
+takes to put both workspaces in order, so sway never draws a hole or a
+window in a passing place:
 
-`nop layout show` (`swaytiles show`) brings a window back from the
-scratchpad. sway would first tile it next to the focused window, so the
-daemon sends `scratchpad show`, `floating disable`, the move after the
-last window and the steps of `assemble` as one command,
-and records the result as `built`.
+- `leaving` puts the windows it leaves behind in order, worked out on
+  the model of the workspace without it.
+- `entering` takes it straight to its place: `move to mark` after the
+  last window of the workspace it goes to and the steps of `assemble`,
+  worked out on the model of that workspace with it. Without this, sway
+  would first tile it next to the focused window there.
+
+The moves that use them: to another workspace or output, `nop layout
+hide` (`move scratchpad`), `nop layout float` (`floating toggle`) both
+ways, and `nop layout show` (`swaytiles show`), which brings a window
+back from the scratchpad with `scratchpad show` and `floating disable`
+first. A window closed or moved by sway itself still shows one frame
+with the hole.
 
 `nop layout master` is the same swap, with the master. On workspaces
 without a layout, a move is sway's own, except that `presses` predicts

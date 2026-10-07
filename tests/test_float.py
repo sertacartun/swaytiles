@@ -70,6 +70,20 @@ def test_a_floating_window_moved_to_a_tiled_workspace_tiles(session):
     assert s.shape("1") == "- F[w1]"
 
 
+def test_a_floating_window_moved_to_a_tiled_workspace_goes_to_its_place_in_one_step(session):
+    s = session("float", workspaces={"1": "float", "2": "master"}, config=MOVES.replace("number 1", "number 2"))
+    s.command("workspace 2")
+    s.open("t1")
+    s.open("t2")
+    s.focus("t1")
+    s.command("workspace 1")
+    s.open("w1")
+    s.focus("w1")
+    drawn = s.drawn(lambda: s.key("F7"))
+    assert len(drawn) == 1, drawn
+    assert s.shape("2") == "H[t1 V[t2 w1]]"
+
+
 def test_leaving_float_restores_the_order(session):
     s = session("master")
     for index in range(1, 5):
