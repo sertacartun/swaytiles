@@ -145,6 +145,13 @@ the first frame:
   window, so the rule first takes it off a window that is no longer on
   the workspace (`elsewhere`): a window moved away while the daemon is
   busy, stopped or gone does not draw new windows after it.
+- **A lone master.** The window that opens next to a lone master would
+  first get half the room. When the master has a saved share, the daemon
+  marks it `_layout_sized_<hex>` and puts the axis and the share in
+  `$layout_axis_<hex>` and `$layout_share_<hex>`, and the tile rule ends
+  with `resize set` on that mark, so the first frame already has the
+  master's size. sway replaces variables only in a command's arguments,
+  so the rule cannot hold whole commands.
 - **The gate.** sway runs `for_window` rules again when a window's marks,
   title or app id change, for every window that has not matched them yet.
   A global rule gives each new window a short-lived `_layout_fresh` mark,

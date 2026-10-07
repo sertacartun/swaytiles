@@ -22,6 +22,7 @@ ICONS = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "sway
 MARK = "_layout"
 FLOATED = "_layout_floated"
 AFTER = "_layout_after_"
+SIZED = "_layout_sized_"
 SYNC = "layout:sync"
 ACT = "layout:act"
 RENAMED = {"sway": "default"}
@@ -951,6 +952,7 @@ class Daemon:
         self.areas = {}
         self.tiled = set()
         self.ratios = {}
+        self.sized = {}
         self.carried = (None, None, None)
         self.focus = [None, None]
         self.refocused = False
@@ -1054,11 +1056,16 @@ class Daemon:
             if ids and trimmed(shape(workspace)) == self.target(name, ids):
                 self.measure(workspace, ids)
 
-    def resize(self, name, target, ids):
+    def sizing(self, name, target, ids):
+        """The axis and the share in ppt the master `ids[0]` takes in `target`, if it has a saved one."""
         ratio = self.ratios.get(name)
         if ratio is None or isinstance(target, int) or target[0] not in ("splith", "splitv") or ids[0] not in target[1]:
-            return []
-        return [f"[con_id={ids[0]}] resize set {'width' if target[0] == 'splith' else 'height'} {round(ratio * 100)} ppt"]
+            return None
+        return "width" if target[0] == "splith" else "height", round(ratio * 100)
+
+    def resize(self, name, target, ids):
+        size = self.sizing(name, target, ids)
+        return [f"[con_id={ids[0]}] resize set {size[0]} {size[1]} ppt"] if size else []
 
     def insist(self, command):
         for delay in (0.3, 1.0):
@@ -1092,22 +1099,35 @@ class Daemon:
         commands.append(f"set {variable} {AFTER + encoded(name) if active else '_layout_off'}")
         if name not in self.anchored:
             mark = AFTER + encoded(name)
+            # A lone master marked SIZED takes its saved share as the window
+            # comes in next to it, so sway never draws the two halves.
+            axis, share = f"$layout_axis_{encoded(name)}", f"$layout_share_{encoded(name)}"
+            commands += [f"set {axis} width", f"set {share} 50"]
             action = (f"[con_mark=^{mark}$ workspace={elsewhere(name)}] unmark {mark}; "
                       f"[con_mark=^_layout_fresh$] move container to mark ${variable}; [con_mark=^_layout_fresh$] mark --add ${variable}; "
+                      f"[con_mark=^{SIZED + encoded(name)}$] resize set ${axis} ${share} ppt; "
                       "[con_mark=^_layout_off$] unmark _layout_off")
             commands.append(f'for_window [workspace="^{criteria(name)}$" tiling] "{action}"')
         self.anchored[name] = active
         return commands
 
     def anchors(self, tree, tiles):
-        held = marked(tree, AFTER)
+        held = marked(tree, AFTER) | marked(tree, SIZED)
         wanted, commands = {}, []
         for ws in workspaces(tree):
-            active = self.chosen(ws["name"]) not in ("default", "float")
-            commands += self.tile_rule(ws["name"], active)
+            name = ws["name"]
+            active = self.chosen(name) not in ("default", "float")
+            commands += self.tile_rule(name, active)
             ids = self.ordered(tiles[ws["id"]])
             if active and ids:
-                wanted[AFTER + encoded(ws["name"])] = ids[-1]
+                wanted[AFTER + encoded(name)] = ids[-1]
+            # 0 stands for the next window.
+            size = self.sizing(name, self.target(name, [*ids, 0]), [*ids, 0]) if active and len(ids) == 1 else None
+            if size and self.sized.get(name) != size:
+                commands += [f"set $layout_axis_{encoded(name)} {size[0]}", f"set $layout_share_{encoded(name)} {size[1]}"]
+                self.sized[name] = size
+            if size:
+                wanted[SIZED + encoded(name)] = ids[0]
         commands += [f"unmark {mark}" for mark in held if mark not in wanted]
         return commands + [f"[con_id={con}] mark --add {mark}" for mark, con in wanted.items() if held.get(mark) != con]
 
@@ -1432,7 +1452,8 @@ class Daemon:
         tree = sway.tree()
         commands = [command for name in list(self.rules) for command in self.float_rule(name, None)]
         commands += [command for name in list(self.anchored) for command in self.tile_rule(name, False)]
-        sway.command(*commands, *(f"[con_id={con}] opacity 1" for con in invisible(tree)), *(f"unmark {mark}" for mark in marked(tree, AFTER)))
+        marks = [*marked(tree, AFTER), *marked(tree, SIZED)]
+        sway.command(*commands, *(f"[con_id={con}] opacity 1" for con in invisible(tree)), *(f"unmark {mark}" for mark in marks))
 
     def recover(self):
         self.sway.command(*(f"[con_id={con}] opacity 1" for con in invisible(self.sway.tree())))

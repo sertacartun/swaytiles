@@ -1,5 +1,6 @@
 """The situations that broke other layout daemons."""
 
+import os
 import signal
 import threading
 
@@ -366,7 +367,13 @@ def test_the_master_keeps_its_size_down_to_one_window_and_back(session):
     s.open("w3")
     s.close("w2")
     s.close("w3")
-    drawn = s.drawn(lambda: s.open("w4"))
-    assert len(drawn) == 1, drawn
+    # Stopped, the daemon cannot touch the first frame: sway's own rule sizes the master.
+    os.kill(s.daemon.pid, signal.SIGSTOP)
+    try:
+        s.open("w4", settle=False)
+        assert s.width("w1") == 0.7
+    finally:
+        os.kill(s.daemon.pid, signal.SIGCONT)
+    s.settle()
     assert s.shape() == "H[w1 w4]"
     assert s.width("w1") == 0.7
