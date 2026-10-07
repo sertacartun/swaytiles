@@ -155,3 +155,31 @@ def test_presses_counts_the_moves_that_leave_the_workspace():
     # It leaves its column first.
     assert sl.presses(nested, 6, "right") == 2
     assert sl.presses(nested, 6, "up") is None
+
+
+def test_the_model_does_what_sway_does():
+    def con(id_, layout="none", *nodes):
+        return {"id": id_, "type": "con" if id_ < 100 else "workspace", "layout": layout, "nodes": list(nodes), "floating_nodes": []}
+
+    def after(workspace, *steps):
+        model = sl.copied(workspace)
+        for step, *arguments in steps:
+            step(model, *arguments)
+        return sl.shape(model)
+    master = con(100, "splith", con(1), con(10, "splitv", con(2), con(3)))
+    assert after(master, (sl.put_after, 3, 4)) == ("splith", [1, ("splitv", [2, 3, 4])])
+    assert after(master, (sl.take_out, 2)) == ("splith", [1, ("splitv", [3])])
+    assert after(master, (sl.take_out, 2), (sl.take_out, 3)) == ("splith", [1])
+    assert after(master, (sl.enclose, 1, "splitv")) == ("splith", [("splitv", [1]), ("splitv", [2, 3])])
+    assert after(master, (sl.move, 3, "up")) == ("splith", [1, ("splitv", [3, 2])])
+    # Leaving the stack at its edge, and turning the workspace around the others.
+    deep = con(100, "splith", con(1), con(10, "splitv", con(2), con(11, "splith", con(3), con(4))))
+    assert after(deep, (sl.move, 4, "right")) == ("splith", [1, ("splitv", [2, ("splith", [3])]), 4])
+    # sway flattens the stack it wrapped, the other way round, as a headless sway shows.
+    assert after(master, (sl.move, 1, "down")) == ("splitv", [3, 2, 1])
+    assert sl.move(sl.copied(master), 1, "left") == "cross"
+    assert sl.move(sl.copied(master), 2, "right") == "out"
+    assert sl.move(sl.copied(master), 1, "right") == "into"
+    assert sl.move(sl.copied(master), 3, "left") == "into"
+    # The models leave the tree they were copied from alone.
+    assert sl.shape(master) == ("splith", [1, ("splitv", [2, 3])])

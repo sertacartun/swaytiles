@@ -148,12 +148,11 @@ the first frame:
   busy, stopped or gone does not draw new windows after it.
 - **The next window's place.** The anchor is not always the last window:
   `foresee` works out how the next window reaches its place in the target
-  with the steps the rule can take, trying each plan on a model of the
-  workspace, simplest first: go right after a window, pass a window with
-  a `move` (which keeps both sizes), turn the workspace or leave a
-  container with a `move`, swap with one or two windows (marked
-  `_layout_swap_<hex>` and `_layout_reswap_<hex>`), and nest in a
-  container of its own. The plan is kept in marks and in
+  with the steps the rule can take, trying each plan on the model of the
+  workspace (see below), simplest first: go right after a window, pass a
+  window with a `move` (which keeps both sizes), turn the workspace or
+  leave a container with a `move`, and nest in a container of its own.
+  The plan is kept in a mark and in
   `$layout_role_<hex>`, `$layout_way_<hex>` and `$layout_inner_<hex>`:
   sway replaces variables only in a command's arguments, so the rule
   cannot hold whole commands, and the role mark it gives the window
@@ -162,13 +161,14 @@ the first frame:
   comes in at the master's level, the master is marked
   `_layout_sized_<hex>` and the rule ends with `resize set` to its saved
   share. So in every layout up to 8 windows sway draws a new window in
-  its place from the first frame, and the daemon has nothing left to do;
-  the one exception is a grid of 9 windows getting a 10th, which deals
-  its rows out again.
+  its place from the first frame, and the daemon has nothing left to do.
+  The exceptions are a grid whose rows are dealt out again as a window
+  comes in, from 4 to 5 windows and from 9 to 10: sway draws one frame
+  before the daemon rebuilds it.
 - **Used once.** sway keeps the rules of every daemon that ran since it
   last read its config, and runs them all. Each step uses itself up: the
-  swap marks are taken off and the role is set back to none, so an older
-  copy of the rule does nothing more.
+  role is set back to none, so an older copy of the rule does nothing
+  more.
 - **The gate.** sway runs `for_window` rules again when a window's marks,
   title or app id change, for every window that has not matched them yet.
   A global rule gives each new window a short-lived `_layout_fresh` mark,
@@ -214,6 +214,22 @@ from the close event of the master, so the next master takes the same
 size. A window sway has just put next to the master took its room from
 all of them alike, so `measure` reads the share from the room the others
 have, and a lone master keeps the share it had.
+
+## The model of sway
+
+Some steps go in one message with a command whose result the daemon
+cannot read first: the tile rule's plan, the windows left behind by one
+that moves away, the window that comes back. So the daemon works them
+out on a copy of the workspace's tree in sway's own form, with the few
+commands it uses: put a window after another (`move to mark`), take one
+out (a container left empty goes, one left with a single child stays),
+nest one (`split h, layout`), and `move <direction>` as
+`container_move_in_direction` does it: pass a window beside it, leave its
+container at the edge, turn the workspace around the others
+(`workspace_rejigger`), cross to the next output, then flatten a split
+left holding only a split across it. `foresee` tries its plans on it,
+`leaving` and `settling` build from it, and `presses` counts with it how
+many of sway's own moves take a window to the next output.
 
 ## Changes made by hand
 
@@ -277,7 +293,7 @@ layout:
 A window that leaves a workspace's layout leaves a hole sway would draw
 before the daemon fills it. So wherever the daemon takes the window away
 itself, `leaving` adds the steps that put the others in order, worked
-out on the workspace as `departed` gives it, to the same command: a move
+out on the model of the workspace without the window, to the same command: a move
 to another workspace, `nop layout hide` (`move scratchpad`) and `nop
 layout float` (`floating toggle`). A window floated back takes the place
 of a new one in the same command (`joining`). A window closed or moved
@@ -383,3 +399,5 @@ file, so `drawn` can count the transactions an action costs.
   noticed at the next event.
 - A new floating window takes the next slot in the cascade rather than a
   slot freed by a closed window.
+- A grid whose rows are dealt out again as a window comes in (4 to 5
+  windows, 9 to 10) shows sway's own placement for one frame.

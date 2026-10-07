@@ -2,6 +2,7 @@
 import contextlib
 import fcntl
 import glob
+import itertools
 import json
 import math
 import os
@@ -23,10 +24,8 @@ MARK = "_layout"
 FLOATED = "_layout_floated"
 AFTER = "_layout_after_"
 SIZED = "_layout_sized_"
-SWAP = "_layout_swap_"
-RESWAP = "_layout_reswap_"
 # The marks that point the tile rule at the place of the next window.
-PLACING = (AFTER, SIZED, SWAP, RESWAP)
+PLACING = (AFTER, SIZED)
 NEXT = 0
 SYNC = "layout:sync"
 ACT = "layout:act"
@@ -602,125 +601,141 @@ def refocus(con):
 def settling(workspace, target, con, anchor):
     """The commands that take `con`, put just after `anchor` on the workspace,
     to its place in `target`."""
-    return assemble(arrived(workspace, con, anchor), target, con) or []
+    model = copied(workspace)
+    put_after(model, anchor, con)
+    return assemble(model, target, con) or []
 
 
-def arrived(workspace, con, anchor):
-    """The workspace as sway has it once `con` is put just after `anchor`."""
-    def copy(node):
-        nodes = [copy(child) for child in node["nodes"]]
-        for index, child in enumerate(nodes):
-            if child["id"] == anchor:
-                nodes.insert(index + 1, {"id": con, "type": "con", "layout": "none", "nodes": [], "floating_nodes": []})
-                break
-        return {**node, "nodes": nodes}
-    return copy(workspace)
+# A model of the workspace's tree in sway's own form, to work out what
+# sway's commands will make of it before sending them. Containers made in
+# the model get ids of their own below zero.
+FRESH = itertools.count(-1, -1)
 
 
-def departed(workspace, con):
-    """The workspace as sway has it once `con` has left: a container left
-    empty goes, one left with a single child stays."""
-    def copy(node):
-        if not node["nodes"]:
-            return node
-        nodes = [kept for child in node["nodes"] if child["id"] != con and (kept := copy(child)) is not None]
-        return {**node, "nodes": nodes} if nodes or node["type"] == "workspace" else None
-    return copy(workspace)
+def copied(node):
+    return {**node, "nodes": [copied(child) for child in node["nodes"]]}
+
+
+def position(parent, node):
+    return [child["id"] for child in parent["nodes"]].index(node["id"])
+
+
+def container(layout, nodes):
+    return {"id": next(FRESH), "type": "con", "layout": layout, "nodes": nodes, "floating_nodes": []}
+
+
+def put_after(root, anchor, con):
+    """`move to mark` of a new window, `con`, onto `anchor`."""
+    parent = ancestors(root, anchor)[-2]
+    parent["nodes"].insert(position(parent, {"id": anchor}) + 1, {"id": con, "type": "con", "layout": "none", "nodes": [], "floating_nodes": []})
+
+
+def take_out(root, con, path=None):
+    """`con` leaves, from the place `path` leads to: a container left empty
+    goes, one left with a single child stays."""
+    path = path or ancestors(root, con)
+    for parent, child in zip(reversed(path[:-1]), reversed(path[1:]), strict=True):
+        parent["nodes"][:] = [node for node in parent["nodes"] if node is not child]
+        if parent["nodes"] or parent is root:
+            break
+
+
+def enclose(root, con, layout):
+    """`split h, layout <layout>` on the window `con`."""
+    parent = ancestors(root, con)[-2]
+    index = position(parent, {"id": con})
+    parent["nodes"][index] = container(layout, [parent["nodes"][index]])
+
+
+def move(root, con, direction):
+    """sway's `move <direction>` of the window `con`, as
+    container_move_in_direction in sway/commands/move.c does it: "swap"
+    past a window beside it, which keeps both sizes, "out" of its
+    container to the side, or around the workspace's other windows when the
+    move goes across it (workspace_rejigger, which keeps a single child
+    wrapped), "cross" to the next output, or "into" a container beside it,
+    which the model does not follow."""
+    offset = -1 if direction in ("left", "up") else 1
+    path = ancestors(root, con)
+    window, level, wrapped = path[-1], len(path) - 2, False
+    current = window
+    while True:
+        parent = path[level]
+        if family(parent["layout"]) != family(SPLITS[direction]):
+            if parent is root:
+                wrapper = container(root["layout"], root["nodes"])
+                root["nodes"], root["layout"] = [wrapper], SPLITS[direction]
+                path.insert(1, wrapper)
+                current, level, wrapped = wrapper, 0, True
+            else:
+                current, level = parent, level - 1
+            continue
+        index = position(parent, current)
+        beside = parent["nodes"][index + offset] if 0 <= index + offset < len(parent["nodes"]) else None
+        if current is not window:
+            break
+        if beside is not None and not beside["nodes"]:
+            parent["nodes"][index], parent["nodes"][index + offset] = beside, window
+            return "swap"
+        if beside is not None:
+            return "into"
+        if parent is root:
+            return "cross"
+        current, level = parent, level - 1
+    if beside is not None:
+        return "into"
+    old = path[-2]
+    if not wrapped and path[-3] is root and len(old["nodes"]) == 1:
+        # A window alone in a container right under the workspace.
+        return "cross"
+    # sway puts the window in its new place before it reaps its old one.
+    parent["nodes"].insert(position(parent, current) + (offset > 0), window)
+    take_out(root, con, path)
+    squash(root)
+    return "out"
+
+
+def squash(node):
+    """sway's flattening of a split that holds nothing but a split across
+    it, inside a split going the inner one's way. sway puts the inner
+    windows in one by one at the same place, so they end up reversed."""
+    index = 0
+    while index < len(node["nodes"]):
+        child = node["nodes"][index]
+        inner = child["nodes"][0] if len(child["nodes"]) == 1 else None
+        if (inner is not None and {child["layout"], inner["layout"]} <= {"splith", "splitv"}
+                and family(child["layout"]) != family(inner["layout"]) == family(node["layout"])):
+            node["nodes"][index:index + 1] = inner["nodes"][::-1]
+            index += len(inner["nodes"])
+        else:
+            squash(child)
+            index += 1
 
 
 def foresee(workspace, target):
     """How the tile rule should place the next window, NEXT in `target`, so
     that sway draws it in its place from the first frame: the window it goes
-    right after, the windows it then swaps with, in turn, and the direction
-    of a move that turns the workspace with it and the layout of a container
-    it nests in, if any. Each plan is tried on a model of the workspace;
-    None if none gives `target`."""
-    def model(node):
-        return node["id"] if not node["nodes"] else [node["layout"], [model(child) for child in node["nodes"]]]
-
-    def lists(node):
-        return node if isinstance(node, int) else [node[0], [lists(child) for child in node[1]]]
-
-    def find(node, con):
-        for index, child in enumerate(node[1]):
-            if child == con:
-                return node, index
-            if not isinstance(child, int) and (found := find(child, con)):
-                return found
-        return None
-
-    def chain(node, con):
-        """The containers from `node` down to the one holding `con`."""
-        for child in node[1]:
-            if child == con:
-                return [node]
-            if not isinstance(child, int) and (found := chain(child, con)):
-                return [node, *found]
-        return []
-
-    def move(root, way):
-        """sway's `move <way>` of NEXT (container_move_in_direction), where it
-        passes a window beside it, leaves its container or turns the
-        workspace; False where it would go into another container or another
-        output. Passing a window only swaps their places in the list, so
-        both keep their sizes, where `swap container` trades them."""
-        offset = -1 if way in ("left", "up") else 1
-        parents, current = chain(root, NEXT), NEXT
-        for parent in reversed(parents):
-            index = parent[1].index(current)
-            if family(parent[0]) == family(SPLITS[way]):
-                if 0 <= index + offset < len(parent[1]):
-                    beside = parent[1][index + offset]
-                    if current != NEXT or not isinstance(beside, int):
-                        return False
-                    parent[1][index], parent[1][index + offset] = beside, NEXT
-                    return True
-                if current != NEXT:
-                    parents[-1][1].remove(NEXT)
-                    parent[1].insert(parent[1].index(current) + (offset > 0), NEXT)
-                    return True
-            current = parent
-        if root[0] not in ("splith", "splitv") or family(root[0]) == family(SPLITS[way]):
-            return False
-        # Across the workspace: sway wraps the other windows, even a lone
-        # one, and puts this one first or last (workspace_rejigger).
-        parents[-1][1].remove(NEXT)
-        rest = [root[0], root[1]]
-        root[:] = [SPLITS[way], [NEXT, rest] if offset < 0 else [rest, NEXT]]
-        return True
-
-    def run(after, swaps, way, nest):
-        root = [workspace["layout"], [model(child) for child in workspace["nodes"]]]
-        parent, index = find(root, after)
-        parent[1].insert(index + 1, NEXT)
-        for other in swaps:
-            (one, first), (two, second) = find(root, NEXT), find(root, other)
-            one[1][first], two[1][second] = other, NEXT
-        if way and not move(root, way):
-            return None
-        if nest:
-            parent, index = find(root, NEXT)
-            parent[1][index] = [nest, [NEXT]]
-        return root
-
+    right after, the direction of a move that turns the workspace with it
+    and the layout of a container it nests in, if any. Each plan is tried
+    on the model of the workspace, the simplest first; None if none gives
+    `target`."""
     if covered(workspace) or not workspace["nodes"]:
         return None
-    target = lists(target)
-    wanted = ([target[0], target[1]] if not isinstance(target, int) and target[0] not in TABBED else None)
     parent = parent_of(target, NEXT)
     nests = [None, parent[0]] if parent is not None and len(parent[1]) == 1 else [None]
     present = tiled(workspace)
-    # The simplest plans first: an anchor alone, then a move, the one swap
-    # with the anchor, any one swap, and two swaps.
-    plans = [(after, swaps, way, nest) for swaps, way in [((), None)] for nest in nests for after in present]
-    plans += [(after, (), way, nest) for way in SPLITS for nest in nests for after in present]
-    plans += [(after, (after,), None, nest) for nest in nests for after in present]
-    plans += [(after, (other,), None, nest) for nest in nests for after in present for other in present if other != after]
-    plans += [(after, (one, two), None, nest) for nest in nests for after in present for one in present for two in present if one != two]
-    for plan in plans:
-        root = run(*plan)
-        if root is not None and (root == wanted if wanted else root[1] == [target]):
-            return plan
+    for way in (None, *SPLITS):
+        for nest in nests:
+            for after in present:
+                model = copied(workspace)
+                put_after(model, after, NEXT)
+                if way and move(model, NEXT, way) not in ("swap", "out"):
+                    continue
+                if nest:
+                    enclose(model, NEXT, nest)
+                built = shape(model)
+                if (built == target if not isinstance(target, int) and target[0] not in TABBED else built[1] == [target]):
+                    return after, way, nest
     return None
 
 
@@ -780,79 +795,13 @@ def resolve(tree, target):
 
 def presses(workspace, con, direction):
     """How many of sway's own `move <direction>` take `con` to the next
-    output, or None if one would move it inside the workspace. A window at
+    output, or None if one would leave it on the workspace. A window at
     the edge of a container first leaves the container, which shows nothing
-    when the container only wraps the workspace's windows. This follows
-    container_move_in_direction in sway/commands/move.c."""
-    def model(node, parent):
-        copy = {"id": node["id"], "layout": node["layout"], "parent": parent}
-        copy["nodes"] = [model(child, copy) for child in node["nodes"]]
-        found.update({node["id"]: copy})
-        return copy
-
-    def squash_children(node):
-        index = 0
-        while index < len(node["nodes"]):
-            index += squash(node["nodes"][index]) + 1
-
-    def squash(node):
-        if len(node["nodes"]) != 1:
-            squash_children(node)
-            return 0
-        child, parent = node["nodes"][0], node["parent"]
-        if not (node["layout"] in ("splith", "splitv") and child["layout"] in ("splith", "splitv")
-                and family(node["layout"]) != family(child["layout"]) and family(parent["layout"]) == family(child["layout"])):
-            squash_children(node)
-            return 0
-        index = parent["nodes"].index(node)
-        parent["nodes"].remove(node)
-        for grandchild in child["nodes"]:
-            parent["nodes"].insert(index, grandchild)
-            grandchild["parent"] = parent
-        return len(child["nodes"]) - 1
-
-    def step(root, window):
-        offset = -1 if direction in ("left", "up") else 1
-        current, wrapped = window, False
-        while True:
-            parent = current["parent"]
-            if family(parent["layout"]) != family(SPLITS[direction]):
-                if parent is root:
-                    wrapper = {"layout": root["layout"], "parent": root, "nodes": root["nodes"]}
-                    for child in wrapper["nodes"]:
-                        child["parent"] = wrapper
-                    root["nodes"], root["layout"], wrapped, current = [wrapper], SPLITS[direction], True, wrapper
-                else:
-                    current = parent
-                continue
-            index = parent["nodes"].index(current)
-            beside = 0 <= index + offset < len(parent["nodes"])
-            if current is not window:
-                break
-            if beside:
-                return "within"
-            if parent is root:
-                return "cross"
-            current = parent
-        old = window["parent"]
-        if beside:
-            return "within"
-        if not wrapped and old["parent"] is root and len(old["nodes"]) == 1:
-            return "cross"
-        old["nodes"].remove(window)
-        parent["nodes"].insert(index + (0 if offset < 0 else 1), window)
-        window["parent"] = parent
-        while old is not root and not old["nodes"]:
-            old["parent"]["nodes"].remove(old)
-            old = old["parent"]
-        squash_children(root)
-        return "promote"
-
-    found = {}
-    root = model(workspace, None)
+    when the container only wraps the workspace's windows."""
+    model = copied(workspace)
     for count in range(1, len(ancestors(workspace, con)) + 2):
-        outcome = step(root, found[con])
-        if outcome != "promote":
+        outcome = move(model, con, direction)
+        if outcome != "out":
             return count if outcome == "cross" else None
     return None
 
@@ -998,8 +947,8 @@ class Daemon:
     def inspect(self, workspace, ids, arrived):
         name, seen = workspace["name"], self.built.get(workspace["name"])
         if trimmed(shape(workspace)) == self.target(name, ids):
-            # As the layout has it: the tile rule may have swapped windows to
-            # put a new one in its place.
+            # As the layout has it, the moves of the tile rule included:
+            # nothing was changed by hand.
             return
         known = set(leaves(seen)) if seen is not None else set()
         extra = [con for con in ids if con not in known]
@@ -1115,18 +1064,15 @@ class Daemon:
             commands.append(f"set {role} _layout_none_{code}")
             self.roles.pop(name, None)
         if name not in self.anchored:
-            # The window goes right after the anchor, swaps with the windows
-            # marked SWAP and RESWAP, turns the workspace with a move or nests
-            # in a container, as `foresee` planned, so it is drawn in its place
+            # The window goes right after the anchor, turns the workspace with
+            # a move or nests in a container, as `foresee` planned, so it is drawn in its place
             # from the first frame. Each step is used once: sway keeps the rules
             # of every daemon that ran since it last read its config.
             axis, share = f"$layout_axis_{code}", f"$layout_share_{code}"
             commands += [f"set {axis} width", f"set {share} 50", f"set {role} _layout_none_{code}", f"set {way} right", f"set {inner} splith"]
             fresh = "[con_mark=^_layout_fresh$]"
-            action = (*(f"[con_mark=^{mark}$ workspace={elsewhere(name)}] unmark {mark}" for mark in (AFTER + code, SWAP + code, RESWAP + code)),
+            action = (f"[con_mark=^{AFTER + code}$ workspace={elsewhere(name)}] unmark {AFTER + code}",
                       f"{fresh} move container to mark ${variable}", f"{fresh} mark --add ${variable}",
-                      *(f"[con_mark=^{mark}$] swap container with mark _layout_fresh; [con_mark=^{mark}$] unmark {mark}"
-                        for mark in (SWAP + code, RESWAP + code)),
                       f"{fresh} mark --add ${role}",
                       f"[con_mark=^_layout_(turn|both)_{code}$] move ${way}",
                       f"[con_mark=^_layout_(nest|both)_{code}$] split h, layout ${inner}",
@@ -1164,20 +1110,19 @@ class Daemon:
             # which shows nothing, so the next one comes in at its place.
             commands += [f"[con_id={ids[0]}] move {direction}" for direction in turns(ws["layout"], coming[0])]
             ws = {**ws, "layout": coming[0]}
-        after, swaps, way, nest = (self.plan(ws, name, ids) if not covered(ws) else None) or (ids[-1], (), None, None)
+        after, way, nest = (self.plan(ws, name, ids) if not covered(ws) else None) or (ids[-1], None, None)
         wanted[AFTER + code] = after
-        wanted.update(zip((SWAP + code, RESWAP + code), swaps, strict=False))
         role = "both" if way and nest else "turn" if way else "nest" if nest else "none"
         values = (f"_layout_{role}_{code}", way or "right", layout_command(nest)[7:] if nest else "splith")
         if self.roles.get(name) != values:
             commands += [f"set ${key}_{code} {value}" for key, value in zip(("layout_role", "layout_way", "layout_inner"), values, strict=True)]
             self.roles[name] = values
-        # A window coming in at the master's level takes room from it, and a
-        # swap trades sizes: the rule gives the master its saved size at once.
+        # A window coming in at the master's level takes room from it: the
+        # rule gives the master its saved size at once.
         level = 1 if isinstance(now, int) or now[0] in TABBED else len(now[1])
-        widening = bool(swaps) or (not isinstance(coming, int) and len(coming[1]) > level)
+        widening = not isinstance(coming, int) and len(coming[1]) > level
         size = self.sizing(name, coming, [*ids, NEXT]) if widening else None
-        self.resizing[name] = bool(swaps or size)
+        self.resizing[name] = bool(size)
         if size and self.sized.get(name) != size:
             commands += [f"set $layout_axis_{code} {size[0]}", f"set $layout_share_{code} {size[1]}"]
             self.sized[name] = size
@@ -1342,10 +1287,10 @@ class Daemon:
                 self.float_all(workspace, [con for con in ids if con not in self.kept], new, name in shown)
             elif self.tiling(name) is not None:
                 tree_shape = shape(workspace)
-                # The tile rule gave the master its saved size or swapped
-                # windows as the new one came in: their sizes tell nothing.
-                swapped = new in ids and self.resizing.get(name)
-                if ids and not swapped and (trimmed(tree_shape) == self.target(name, ids)
+                # The tile rule gave the master its saved size as the new
+                # window came in: the sizes tell nothing.
+                resized = new in ids and self.resizing.get(name)
+                if ids and not resized and (trimmed(tree_shape) == self.target(name, ids)
                                             or trimmed(without(tree_shape, new)) == self.built.get(name)):
                     self.measure(workspace, ids, new)
                 shaped = self.shape_up(workspace, ids, new, focused) or shaped
@@ -1429,7 +1374,8 @@ class Daemon:
         if node["type"] != "con" or self.tiling(name) is None or not ids or covered(workspace):
             return []
         self.farewell(node)
-        rest, target = departed(workspace, con), self.target(name, ids)
+        rest, target = copied(workspace), self.target(name, ids)
+        take_out(rest, con)
         steps = [] if trimmed(shape(rest)) == target and not wrapped(rest) else assemble(rest, target) or []
         return steps + self.resize(name, target, ids)
 
