@@ -831,6 +831,19 @@ def facing(node, direction):
     return [leaf for child in node[1] for leaf in facing(child, direction)]
 
 
+def landing(workspace, direction):
+    """The window sway's `move` puts a window next to when it comes into
+    `workspace` from another output: it takes the near end of a split the
+    way it moves, and goes into the focused child of one split across."""
+    node, near, edge = workspace, direction in ("right", "down"), False
+    along = ("splith", "tabbed") if direction in ("left", "right") else ("splitv", "stacked")
+    while node["nodes"]:
+        edge = edge or node["layout"] in along
+        node = (node["nodes"][0 if near else -1] if edge else
+                next(child for id in node["focus"] for child in node["nodes"] if child["id"] == id))
+    return node["id"]
+
+
 def floater(workspace, node, direction):
     axis, sign = (0 if direction in ("left", "right") else 1), (-1 if direction in ("left", "up") else 1)
 
@@ -1354,23 +1367,30 @@ class Daemon:
         elif tiles:
             self.sway.command(f"{tiles[0]}, {command}")
         else:
-            count = 1 if managed or not direction else presses(source, con, direction) or 1
-            self.sway.command(f"[con_id={con}] " + (command if managed else ", ".join([native] * count)), *away)
+            # Into a workspace with no layout: sway's own moves, which enter
+            # at the near edge, where `move container to workspace` would put
+            # it next to the focused window.
+            count = direction and presses(source, con, direction)
+            self.sway.command(f"[con_id={con}] " + (", ".join([native] * count) if count else command), *away)
 
     def entering(self, workspace, con, heading=None):
         """The commands that take `con` from wherever it is to its place in
         the layout of `workspace`, in one step, so sway never draws it where
         it would put it first, next to the focused window there. Coming in
         through an edge, it takes one of the places the layout puts at that
-        edge, by sway's own rule for `move`: the first of them on a move
-        right or down, the last on a move left or up. Otherwise it joins
-        the end of the order."""
+        edge: next to the window sway's own `move` would put it by, before
+        it on a move right or down and after it on a move left or up, or
+        when that is not at the edge, the first place there or the last.
+        Otherwise it joins the end of the order."""
         name = workspace["name"]
         ids = [other for other in self.ordered(tiled(workspace)) if other != con]
         layout = self.tiling(name)
         places = range(len(ids) + 1) if heading and layout else ()
         edge = [place for place in places if con in facing(normalize(layout([*ids[:place], con, *ids[place:]])), heading)]
-        at = (min if heading in ("right", "down") else max)(edge, default=len(ids))
+        near = heading in ("right", "down")
+        by = landing(workspace, heading) if edge else None
+        at = ids.index(by) + (not near) if by in ids else None
+        at = at if at in edge else (min if near else max)(edge, default=len(ids))
         self.order[:] = [other for other in self.order if other != con]
         self.order.insert(self.order.index(ids[at]) if at < len(ids) else len(self.order), con)
         if not ids or layout is None or covered(workspace):

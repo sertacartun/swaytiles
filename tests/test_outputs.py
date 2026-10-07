@@ -232,19 +232,61 @@ def test_the_workspace_a_window_leaves_is_put_in_order_in_the_same_step(session)
     assert (s.shape("1", exact=True), s.shape("10")) == ("H[a2 V[a3]]", "H[b1 S[a1]]")
 
 
-@pytest.mark.parametrize("layout, entered, left", [
-    ("wide", "V[b1 H[a1 a2 a3]]", "V[a1 H[a2 a3]]"),
-    ("centered", "H[b1 a1 V[a2 a3]]", "H[a3 a1 a2]"),
-    ("grid", "V[H[b1 a1] H[a2 a3]]", "V[H[a1 a2] a3]"),
+@pytest.mark.parametrize("layout, focus, entered, left", [
+    ("wide", "a3", "V[a1 H[b1 a2 a3]]", "V[a1 H[a2 a3]]"),
+    ("wide", "a1", "V[b1 H[a1 a2 a3]]", "V[a1 H[a2 a3]]"),
+    ("centered", "a3", "H[b1 a1 V[a2 a3]]", "H[a3 a1 a2]"),
+    ("grid", "a3", "V[H[a1 a2] H[b1 a3]]", "V[H[a1 a2] a3]"),
+    ("grid", "a2", "V[H[b1 a1] H[a2 a3]]", "V[H[a1 a2] a3]"),
 ])
-def test_a_window_carried_into_a_shared_edge_enters_at_it(session, layout, entered, left):
+def test_a_window_carried_into_a_shared_edge_enters_where_sway_puts_it(session, layout, focus, entered, left):
     s = session("master", workspaces={"1": layout, "10": "master"}, config=CONFIG, outputs=2)
     s.command("workspace 1")
     for title in ("a1", "a2", "a3"):
         s.open(title)
+    s.focus(focus)
     s.command("workspace 10")
     s.open("b1")
     s.key("F2")
     assert s.shape("1") == entered
     s.key("F1")
     assert s.shape("1") == left
+
+
+@pytest.mark.parametrize("layout", ["master", "master-right", "wide", "centered", "grid", "dwindle", "spiral", "tabbed-master"])
+@pytest.mark.parametrize("focus", ["a1", "a4"])
+@pytest.mark.parametrize("direction", ["right", "left"])
+def test_landing_finds_the_window_sway_puts_a_moved_window_next_to(session, layout, focus, direction):
+    import re
+    import swaytiles
+    there, here = ("1", "10") if direction == "right" else ("10", "1")
+    s = session("master", workspaces={there: layout, here: "default"}, config=CONFIG, outputs=2)
+    s.command(f"workspace {there}")
+    for title in ("a1", "a2", "a3", "a4"):
+        s.open(title)
+    s.focus(focus)
+    s.command(f"workspace {here}")
+    s.open("b1")
+    by = swaytiles.landing(s.workspace(there), direction)
+    s.stop_daemon()
+    s.command(f"[title=^b1$] move {direction}")
+    leaves = re.findall(r"[ab]\d", s.shape(there, exact=True))
+    at = leaves.index("b1")
+    assert s.node(leaves[at + 1 if direction == "right" else at - 1])["id"] == by, leaves
+
+
+def test_a_window_carried_into_a_workspace_without_a_layout_enters_where_sway_puts_it(session):
+    s = session("master", workspaces={"1": "default", "10": "master"}, config=CONFIG, outputs=2)
+    s.command("workspace 1")
+    s.open("a1")
+    s.open("a2")
+    s.command("workspace 10")
+    for title in ("b1", "b2", "b3"):
+        s.open(title)
+    s.focus("b3")
+    drawn = s.drawn(lambda: s.key("F2"))
+    assert len(drawn) == 1, drawn
+    assert (s.shape("1"), s.shape("10")) == ("H[b3 a1 a2]", "H[b1 b2]")
+    assert s.focused() == "b3"
+    s.key("F1")
+    assert (s.shape("1"), s.shape("10")) == ("H[a1 a2]", "H[b1 V[b2 b3]]")
