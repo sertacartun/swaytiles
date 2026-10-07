@@ -1360,19 +1360,22 @@ class Daemon:
     def entering(self, workspace, con, heading=None):
         """The commands that take `con` from wherever it is to its place in
         the layout of `workspace`, in one step, so sway never draws it where
-        it would put it first, next to the focused window there. It joins the
-        end of the order, or leads it when it comes in through the edge the
-        layout gives the master alone, as sway's own `move` enters at the
-        near edge."""
+        it would put it first, next to the focused window there. Coming in
+        through an edge, it takes the last place in the order the layout puts
+        at that edge, as sway's own `move` enters at the near edge: the
+        master when it has the edge alone, the first of the stack when they
+        share it. Otherwise it joins the end of the order."""
         name = workspace["name"]
         ids = [other for other in self.ordered(tiled(workspace)) if other != con]
         layout = self.tiling(name)
-        leads = bool(heading and ids and layout) and facing(normalize(layout([con, *ids])), heading) == [con]
+        places = range(len(ids) + 1) if heading and layout else ()
+        at = max((place for place in places
+                  if con in facing(normalize(layout([*ids[:place], con, *ids[place:]])), heading)), default=len(ids))
         self.order[:] = [other for other in self.order if other != con]
-        self.order.insert(self.order.index(ids[0]) if leads else len(self.order), con)
+        self.order.insert(self.order.index(ids[at]) if at < len(ids) else len(self.order), con)
         if not ids or layout is None or covered(workspace):
             return []
-        order = [con, *ids] if leads else [*ids, con]
+        order = [*ids[:at], con, *ids[at:]]
         target = self.target(name, order)
         return after(ids[-1], con) + settling(workspace, target, con, ids[-1]) + self.resize(name, target, order)
 
