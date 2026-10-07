@@ -9,7 +9,8 @@ import swaytiles
 
 NATIVE = ("set $mod Mod4\nset $left F1\n"
           "bindsym $mod+$left move left\nbindsym $mod+F2 move right\nbindsym $mod+F3 move up\nbindsym $mod+F4 move down\n"
-          "bindsym $mod+F6 move container to workspace number 3\n")
+          "bindsym $mod+F6 move container to workspace number 3\n"
+          "bindsym $mod+F7 floating toggle\nbindsym $mod+F9 move scratchpad\n")
 
 
 def started(session, layout="master", count=4, config=NATIVE, **options):
@@ -48,7 +49,8 @@ def test_the_default_sway_config_gives_up_its_move_keys():
     text += "    bindsym $mod+Shift+minus move scratchpad\n    bindsym $mod+$left focus left\n"
     text += 'mode "resize" {\n    bindsym $left resize shrink width 10px\n    bindsym Return mode "default"\n}\nbindsym $mod+r mode "resize"\n'
     taken = {prefix: swaytiles.following(command) for prefix, command in swaytiles.bindings(text, "/nowhere") if swaytiles.following(command)}
-    assert len(taken) == 18
+    assert len(taken) == 19
+    assert taken["bindsym Mod4+Shift+minus"] == "nop layout hide"
     assert taken["bindsym Mod4+Shift+h"] == "nop layout move left"
     assert taken["bindsym Mod4+Shift+Right"] == "nop layout move right"
     assert taken["bindsym Mod4+Shift+0"] == "nop layout move number 10"
@@ -58,7 +60,10 @@ def test_only_plain_moves_are_taken_over():
     assert swaytiles.following("move left") == "nop layout move left"
     assert swaytiles.following("move container to  workspace number 3") == "nop layout move number 3"
     assert swaytiles.following("move window to workspace web") == "nop layout move web"
-    for command in ("move left 20 px", "move left; focus left", "move container to workspace next", "move scratchpad",
+    assert swaytiles.following("move  scratchpad") == "nop layout hide"
+    assert swaytiles.following("floating toggle") == "nop layout float toggle"
+    for command in ("move left 20 px", "move left; focus left", "move container to workspace next", "floating toggle, resize set 50 ppt",
+                    "[app_id=foot] floating toggle",
                     "move container to workspace number", "move workspace to output left", "nop layout move left"):
         assert swaytiles.following(command) is None, command
 
@@ -123,3 +128,24 @@ def test_a_key_bound_at_runtime_is_taken_over_once_used(session):
     s.focus("w3")
     s.key("F8")
     assert s.shape() == "H[w3 V[w2 w1 w4]]"
+
+
+def test_floating_a_window_by_key_puts_its_layout_in_order_in_one_step(session):
+    s = started(session)
+    s.focus("w1")
+    drawn = s.drawn(lambda: s.key("F7"))
+    assert len(drawn) == 1, drawn
+    assert s.shape() == "H[w2 V[w3 w4]] F[w1]"
+    drawn = s.drawn(lambda: s.key("F7"))
+    assert len(drawn) == 1, drawn
+    assert s.shape() == "H[w2 V[w3 w4 w1]]"
+
+
+def test_hiding_a_window_by_key_puts_its_layout_in_order_in_one_step(session):
+    s = started(session)
+    s.focus("w1")
+    drawn = s.drawn(lambda: s.key("F9"))
+    assert len(drawn) == 1, drawn
+    assert s.shape() == "H[w2 V[w3 w4]]"
+    s.run("show")
+    assert s.shape() == "H[w2 V[w3 w4 w1]]"

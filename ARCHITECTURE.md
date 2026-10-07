@@ -34,7 +34,8 @@ sway ──events──▶ Daemon.handle ──▶ arrange ──▶ one IPC com
   includes from disk), keeps the last binding for each key outside modes,
   and for those that are exactly sway's own `move DIRECTION` or `move
   container to workspace X` sends `bindsym KEYS nop layout move …` with
-  the flags the config gave. A runtime `bindsym` replaces the config's
+  the flags the config gave; `move scratchpad` becomes `nop layout hide`
+  and `floating toggle|enable|disable` becomes `nop layout float …`. A runtime `bindsym` replaces the config's
   binding and lasts until sway reloads, so `adopt` runs again on the
   reload event, and `give_back` binds the original commands when the
   daemon stops. A move key the reader missed is taken over the first
@@ -279,6 +280,15 @@ layout:
    workspace by name or number, it joins the end of the stack. A move
    in a direction takes the focus along, like sway's own.
 
+A window that leaves a workspace's layout leaves a hole sway would draw
+before the daemon fills it. So wherever the daemon takes the window away
+itself, `leaving` adds the steps that put the others in order, worked
+out on the workspace as `departed` gives it, to the same command: a move
+to another workspace, `nop layout hide` (`move scratchpad`) and `nop
+layout float` (`floating toggle`). A window floated back takes the place
+of a new one in the same command (`joining`). A window closed or moved
+by sway itself still shows one frame with the hole.
+
 `nop layout show` (`swaytiles show`) brings a window back from the
 scratchpad. sway would first tile it next to the focused window, so the
 daemon sends `scratchpad show`, `floating disable`, the move after the
@@ -369,8 +379,9 @@ file, so `drawn` can count the transactions an action costs.
 
 ## Known limits
 
-- When the master closes, sway lays the remaining windows out once before
-  the daemon does, so slow clients may show one extra frame.
+- When a window closes, or leaves its workspace by a command the daemon
+  did not send, sway lays out the remaining windows once before the
+  daemon does, so one extra frame may show.
 - sway reports no event for a window dropped on a workspace's edge or
   swapped with the mouse, nor for `layout` or `split` sent with `swaymsg`.
   Pressing on a window to drag it focuses it, so the daemon looks at the

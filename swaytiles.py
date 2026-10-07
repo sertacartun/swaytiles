@@ -42,6 +42,8 @@ EVENTS = {0: "workspace", 1: "output", 3: "window", 5: "binding", 6: "shutdown",
 SUBSCRIPTIONS = ["window", "tick", "workspace", "binding", "output", "shutdown"]
 FOCUSING = re.compile(r"focus (left|right|up|down)")
 MOVING = re.compile(r"move (left|right|up|down)|move (?:container |window )?(?:to )?workspace (number \d+|[^\s\"']+)")
+HIDING = re.compile(r"move (?:container |window )?(?:to )?scratchpad")
+FLOATING = re.compile(r"floating (toggle|enable|disable)")
 ELSEWHERE = ("next", "prev", "next_on_output", "prev_on_output", "back_and_forth", "current", "number")
 RESHAPING = re.compile(r"(?:^|[;,\]])\s*(?:split[hvt]?|layout)\b")
 
@@ -227,8 +229,14 @@ def same_keys(prefix):
 
 
 def following(command):
-    """`nop layout move …` for a binding that is sway's own move, else None."""
-    match = MOVING.fullmatch(" ".join(command.split()))
+    """`nop layout …` for a binding that is sway's own move, a move to the
+    scratchpad or a floating switch, else None."""
+    command = " ".join(command.split())
+    if HIDING.fullmatch(command):
+        return "nop layout hide"
+    if floating := FLOATING.fullmatch(command):
+        return f"nop layout float {floating[1]}"
+    match = MOVING.fullmatch(command)
     if match is None or match[2] in ELSEWHERE:
         return None
     return f"nop layout move {match[1] or match[2]}"
@@ -714,6 +722,17 @@ def arrived(workspace, con, anchor):
                 nodes.insert(index + 1, {"id": con, "type": "con", "layout": "none", "nodes": [], "floating_nodes": []})
                 break
         return {**node, "nodes": nodes}
+    return copy(workspace)
+
+
+def departed(workspace, con):
+    """The workspace as sway has it once `con` has left: a container left
+    empty goes, one left with a single child stays."""
+    def copy(node):
+        if not node["nodes"]:
+            return node
+        nodes = [kept for child in node["nodes"] if child["id"] != con and (kept := copy(child)) is not None]
+        return {**node, "nodes": nodes} if nodes or node["type"] == "workspace" else None
     return copy(workspace)
 
 
@@ -1495,6 +1514,7 @@ class Daemon:
         if destination is None or destination["id"] == source["id"]:
             return self.sway.command(f"[con_id={con}] {native}")
         name, area = destination["name"], destination["rect"]
+        away = self.leaving(source, node) if managed else []
         self.carried = (con, name, direction)
         command = native if target else f"move container to workspace {quoted(name)}, focus"
         floats = self.state["workspaces"].get(name, self.state["layout"]) == "float"
@@ -1506,16 +1526,16 @@ class Daemon:
             self.where[con] = name
             self.sway.command(f"[con_id={con}] floating enable, mark --add {FLOATED}{con}, resize set {geometry[0]} px {geometry[1]} px, "
                               f"{command}, move absolute position {geometry[2]} px {geometry[3]} px",
-                              *self.float_rule(name, cascade(area, self.slots[name])))
+                              *away, *self.float_rule(name, cascade(area, self.slots[name])))
             self.insist(f"[con_id={con}] {placement(*geometry)}")
         elif floated and not floats:
             self.sway.command(f"[con_id={con}] unmark {FLOATED}{con}, floating disable, {command}")
         elif node["type"] == "con" and (steps := self.landing(destination, con, direction)):
-            self.sway.command(*steps, *([f"[con_id={con}] focus"] if direction else []))
+            self.sway.command(*steps, *away, *([f"[con_id={con}] focus"] if direction else []))
             self.record(self.sway.tree())
         else:
             steps = 1 if managed or not direction else presses(source, con, direction) or 1
-            self.sway.command(f"[con_id={con}] " + (command if managed else ", ".join([native] * steps)))
+            self.sway.command(f"[con_id={con}] " + (command if managed else ", ".join([native] * steps)), *away)
 
     def landing(self, destination, con, heading):
         """The commands that move `con` straight to its place in the layout of
@@ -1529,6 +1549,57 @@ class Daemon:
         order = [con, *ids] if leads else [*ids, con]
         target = self.target(name, order)
         return after(ids[-1], con) + settling(destination, target, con, ids[-1]) + self.resize(name, target, order)
+
+    def leaving(self, workspace, node):
+        """The commands that put the other windows of `workspace` back in its
+        layout once `node` has left it, to send with the command that takes
+        it away, so sway never draws the hole it leaves."""
+        name, con = workspace["name"], node["id"]
+        ids = [other for other in self.ordered(tiled(workspace)) if other != con]
+        if node["type"] != "con" or self.tiling(name) is None or not ids or covered(workspace):
+            return []
+        self.farewell(node)
+        rest, target = departed(workspace, con), self.target(name, ids)
+        steps = [] if trimmed(shape(rest)) == target and not wrapped(rest) else assemble(rest, target) or []
+        return steps + self.resize(name, target, ids)
+
+    def joining(self, workspace, con):
+        """The commands that take `con`, just tiled on `workspace`, to the
+        place of a new window there, in the same step."""
+        name = workspace["name"]
+        ids = [other for other in self.ordered(tiled(workspace)) if other != con]
+        if not ids or self.tiling(name) is None or covered(workspace):
+            return []
+        self.order[:] = [other for other in self.order if other != con] + [con]
+        target = self.target(name, [*ids, con])
+        return after(ids[-1], con) + settling(workspace, target, con, ids[-1]) + self.resize(name, target, [*ids, con])
+
+    def hide(self):
+        """`move scratchpad`, with the workspace left behind put in order in the same step."""
+        tree = self.sway.tree()
+        node = focused_node(tree)
+        source = next((ws for ws in workspaces(tree) if node in windows(ws)), None)
+        if source is None or node["nodes"]:
+            return self.sway.command("move scratchpad")
+        self.sway.command(f"[con_id={node['id']}] move scratchpad", *self.leaving(source, node))
+        return self.sync()
+
+    def switch(self, mode):
+        """`floating toggle`, `enable` or `disable` of the focused window: the
+        workspace it leaves is put in order, or it takes the place of a new
+        window, in the same step."""
+        tree = self.sway.tree()
+        node = focused_node(tree)
+        source = next((ws for ws in workspaces(tree) if node in windows(ws)), None)
+        floating = node["type"] == "floating_con"
+        if source is None or node["nodes"] or floating == (not floating if mode == "toggle" else mode == "enable"):
+            return self.sway.command(f"floating {mode}")
+        con = node["id"]
+        if floating:
+            self.sway.command(f"[con_id={con}] floating disable", *self.joining(source, con))
+        else:
+            self.sway.command(f"[con_id={con}] floating enable", *self.leaving(source, node))
+        return self.sync()
 
     def unhide(self, con=None):
         """Bring a window back from the scratchpad, the last one hidden unless
@@ -1551,12 +1622,7 @@ class Daemon:
             self.slots[name] = free_slot(area, taken | {geometry[2:]}, slot + 1)
             commands += [f"[con_id={con}] mark --add {FLOATED}{con}, {placement(*geometry)}", *self.float_rule(name, cascade(area, self.slots[name]))]
         else:
-            commands.append(f"[con_id={con}] floating disable")
-            ids = [c for c in self.ordered(tiled(workspace)) if c != con]
-            if ids and self.tiling(name) is not None and not covered(workspace):
-                self.order[:] = [c for c in self.order if c != con] + [con]
-                target = self.target(name, [*ids, con])
-                commands += after(ids[-1], con) + settling(workspace, target, con, ids[-1]) + self.resize(name, target, [*ids, con])
+            commands += [f"[con_id={con}] floating disable", *self.joining(workspace, con)]
         self.where[con] = name
         self.sway.command(*commands, f"[con_id={con}] focus")
         self.record(self.sway.tree())
@@ -1744,6 +1810,10 @@ class Daemon:
     def act(self, action):
         if action == "master":
             self.promote()
+        elif action == "hide":
+            self.hide()
+        elif action.startswith("float ") and action[6:] in ("toggle", "enable", "disable"):
+            self.switch(action[6:])
         elif action == "show" or (action.startswith("show ") and action[5:].isdigit()):
             self.unhide(int(action[5:]) if action[5:] else None)
         elif action.startswith("default ") and action[8:] in LAYOUTS:

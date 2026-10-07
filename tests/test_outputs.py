@@ -217,3 +217,16 @@ def test_a_window_left_alone_in_its_tabs_gets_its_border_back(session):
         s.key("F1")
         assert s.shape("1") == "a1"
         assert s.node("a1")["window_rect"]["y"] == 5
+
+
+def test_the_workspace_a_window_leaves_is_put_in_order_in_the_same_step(session):
+    s = session("master", workspaces=LAYOUTS, config=CONFIG, outputs=2)
+    s.command("workspace 10")
+    s.open("b1")
+    s.command("workspace 1")
+    for title in ("a1", "a2", "a3"):
+        s.open(title)
+    s.focus("a1")
+    drawn = s.drawn(lambda: s.key("F1"))
+    assert len(drawn) == 1, drawn
+    assert (s.shape("1", exact=True), s.shape("10")) == ("H[a2 V[a3]]", "H[b1 S[a1]]")
