@@ -145,13 +145,29 @@ the first frame:
   window, so the rule first takes it off a window that is no longer on
   the workspace (`elsewhere`): a window moved away while the daemon is
   busy, stopped or gone does not draw new windows after it.
-- **A lone master.** The window that opens next to a lone master would
-  first get half the room. When the master has a saved share, the daemon
-  marks it `_layout_sized_<hex>` and puts the axis and the share in
-  `$layout_axis_<hex>` and `$layout_share_<hex>`, and the tile rule ends
-  with `resize set` on that mark, so the first frame already has the
-  master's size. sway replaces variables only in a command's arguments,
-  so the rule cannot hold whole commands.
+- **The next window's place.** The anchor is not always the last window:
+  `foresee` works out how the next window reaches its place in the target
+  with the steps the rule can take, trying each plan on a model of the
+  workspace, simplest first: go right after a window, pass a window with
+  a `move` (which keeps both sizes), turn the workspace or leave a
+  container with a `move`, swap with one or two windows (marked
+  `_layout_swap_<hex>` and `_layout_reswap_<hex>`), and nest in a
+  container of its own. The plan is kept in marks and in
+  `$layout_role_<hex>`, `$layout_way_<hex>` and `$layout_inner_<hex>`:
+  sway replaces variables only in a command's arguments, so the rule
+  cannot hold whole commands, and the role mark it gives the window
+  switches the steps on. A lone window takes beforehand the orientation
+  the workspace will have with two, which shows nothing. Where the window
+  comes in at the master's level, the master is marked
+  `_layout_sized_<hex>` and the rule ends with `resize set` to its saved
+  share. So in every layout up to 8 windows sway draws a new window in
+  its place from the first frame, and the daemon has nothing left to do;
+  the one exception is a grid of 9 windows getting a 10th, which deals
+  its rows out again.
+- **Used once.** sway keeps the rules of every daemon that ran since it
+  last read its config, and runs them all. Each step uses itself up: the
+  swap marks are taken off and the role is set back to none, so an older
+  copy of the rule does nothing more.
 - **The gate.** sway runs `for_window` rules again when a window's marks,
   title or app id change, for every window that has not matched them yet.
   A global rule gives each new window a short-lived `_layout_fresh` mark,
@@ -324,6 +340,8 @@ These were measured on sway 1.12 or read in its source:
 - `get_config` returns the main config file only, without includes.
 - `focus <direction>` from a floating window only looks at other floating
   windows on the same workspace.
+- Each step of the tile rule whose mark is not there makes sway log
+  "No matching node" at error level, a few lines per new window.
 
 ## Tests
 

@@ -1,6 +1,8 @@
 """Every layout builds the tree it describes, while windows come, go and switch."""
 
 import itertools
+import os
+import signal
 
 import pytest
 from harness import expected
@@ -74,3 +76,23 @@ def test_the_menu_choice_is_remembered_per_workspace(session):
     assert s.shape("2") == "V[x1 x2]"
     assert s.shape("1") == "T[w1 w2]"
     assert (s.chosen("1"), s.chosen("2")) == ("tabbed", "wide")
+
+
+@pytest.mark.parametrize("layout", TILING)
+def test_a_new_window_is_drawn_in_its_place_from_the_first_frame(session, layout):
+    # Stopped, the daemon cannot touch the first frame: sway's own rule places the window.
+    s = session(layout)
+
+    def frame():
+        return {node["name"]: node["rect"] for node in swaytiles.leaf_nodes(s.workspace())}
+    for count in range(1, 8):
+        os.kill(s.daemon.pid, signal.SIGSTOP)
+        try:
+            s.open(f"w{count}", settle=False)
+            s.wait(lambda: False, 0.2)
+            first = frame()
+        finally:
+            os.kill(s.daemon.pid, signal.SIGCONT)
+        drawn = s.drawn(lambda: None)
+        assert frame() == first, f"w{count}: {drawn}"
+        assert s.shape() == expected(layout, count)
