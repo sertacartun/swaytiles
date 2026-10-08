@@ -23,11 +23,17 @@ build-backend = "hatchling.build"
 only-include = ["swaytiles.py"]
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = [
+    "pytest>=8",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.6",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Each test runs its own headless sway, so they run side by side.
+addopts = "-n auto --maxprocesses 8"
 markers = ["sway: needs a headless sway and a GTK 4 test client"]
 
 [tool.ruff]

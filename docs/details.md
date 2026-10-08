@@ -119,6 +119,9 @@ your session. They need `sway`, `wtype` and GTK 4 for Python
 uv run pytest
 ```
 
+They run side by side, one per core up to eight, in about two minutes;
+`-n 0` runs them one at a time.
+
 The animations in the README are recorded the same way, in a headless
 sway, with `uv run python docs/record.py`. That also needs `grim`,
 ImageMagick and the Fira Sans font.
