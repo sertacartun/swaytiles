@@ -512,9 +512,8 @@ def build(node):
         return []
     layout, children = node
     first = leaves(node)[0]
-    commands = [f"[con_id={first}] split h", f"[con_id={first}] {layout_command(layout)}", f"[con_id={first}] mark --add {MARK}"]
-    commands += [f"[con_id={leaves(child)[0]}] move to mark {MARK}" for child in reversed(children[1:])]
-    commands.append(f"[con_id={first}] unmark {MARK}")
+    commands = [f"[con_id={first}] split h", f"[con_id={first}] {layout_command(layout)}",
+                *after(first, *(leaves(child)[0] for child in reversed(children[1:])))]
     return commands + [command for child in children for command in build(child)]
 
 
@@ -560,14 +559,13 @@ def assemble(workspace, target, focused=None):
     direct = [node["id"] for node in workspace["nodes"] if not node["nodes"]]
     commands = []
     if direct and first not in direct:
+        # The first window goes right under the workspace.
         commands += after(direct[0], first)
     elif not direct:
         # Every window is in a container: gather them in the first one and
         # take the first window out of it, in front of it.
         holder = workspace["nodes"][0]
-        commands += [f"[con_id={holder['id']}] mark --add {MARK}"]
-        commands += [f"[con_id={con}] move to mark {MARK}" for con in ids]
-        commands.append(f"[con_id={holder['id']}] unmark {MARK}")
+        commands += after(holder["id"], *ids)
         if not rest:
             # `split none` also arranges the workspace; `layout` would leave the
             # window with the geometry of the container it was in.
@@ -579,9 +577,7 @@ def assemble(workspace, target, focused=None):
     wanted = root if root not in TABBED else layout if layout not in TABBED else "splith"
     commands += [f"[con_id={first}] move {direction}" for direction in turns(layout, wanted)]
     if rest:
-        commands += [f"[con_id={first}] mark --add {MARK}"]
-        commands += [f"[con_id={con}] move to mark {MARK}" for con in reversed(rest)]
-        commands.append(f"[con_id={first}] unmark {MARK}")
+        commands += after(first, *reversed(rest))
     if root in TABBED:
         commands.append(f"[con_id={first}] {layout_command(root)}")
     if not isinstance(target, int):
@@ -589,8 +585,9 @@ def assemble(workspace, target, focused=None):
     return commands + ([refocus(focused)] if focused in ids else [])
 
 
-def after(anchor, con):
-    return [f"[con_id={anchor}] mark --add {MARK}", f"[con_id={con}] move to mark {MARK}", f"[con_id={anchor}] unmark {MARK}"]
+def after(anchor, *cons):
+    """Put `cons` right after `anchor`, the last one first after it."""
+    return [f"[con_id={anchor}] mark --add {MARK}", *(f"[con_id={con}] move to mark {MARK}" for con in cons), f"[con_id={anchor}] unmark {MARK}"]
 
 
 def refocus(con):
@@ -964,13 +961,13 @@ class Daemon:
             # As the layout has it, the moves of the tile rule included:
             # nothing was changed by hand.
             return
-        known = set(leaves(seen)) if seen is not None else set()
-        extra = [con for con in ids if con not in known]
-        present = without(shape(workspace), *extra)
-        before = without(seen, *known.difference(ids)) if seen is not None else None
-        if seen is not None and outline(before) != outline(present):
-            self.adapt(workspace, present, bare(trimmed(before)) == bare(trimmed(present)))
-        elif arrived in ids and (found := conforming(self.tiling(name), shape(workspace))):
+        if seen is not None:
+            had = set(leaves(seen))
+            present = without(shape(workspace), *(con for con in ids if con not in had))
+            before = without(seen, *had.difference(ids))
+            if outline(before) != outline(present):
+                return self.adapt(workspace, present, bare(trimmed(before)) == bare(trimmed(present)))
+        if arrived in ids and (found := conforming(self.tiling(name), shape(workspace))):
             reorder(self.order, found)
 
     def adapt(self, workspace, present, restyled):
@@ -1038,7 +1035,7 @@ class Daemon:
         before = dict(self.ratios)
         self.measure_all(tree)
         if self.ratios != before:
-            self.sway.command(*self.anchors(tree, {ws["id"]: tiled(ws) for ws in workspaces(tree)}))
+            self.sway.command(*self.anchors(tree))
 
     def sizing(self, name, target, ids):
         """The axis and the share in ppt the master `ids[0]` takes in `target`, if it has a saved one."""
@@ -1109,7 +1106,7 @@ class Daemon:
         self.anchored[name] = active
         return commands
 
-    def anchors(self, tree, tiles):
+    def anchors(self, tree):
         """Point the tile rule of every workspace at the place of its next window."""
         held = marked(tree, PLACING)
         wanted, commands = {}, []
@@ -1117,7 +1114,7 @@ class Daemon:
             name = ws["name"]
             active = self.chosen(name) not in ("default", "float")
             commands += self.tile_rule(name, active)
-            ids = self.ordered(tiles[ws["id"]])
+            ids = self.ordered(tiled(ws))
             self.resizing[name] = False
             if active and ids:
                 commands += self.prepare(ws, name, ids, wanted)
@@ -1134,8 +1131,8 @@ class Daemon:
             # which shows nothing, so the next one comes in at its place.
             commands += [f"[con_id={ids[0]}] move {direction}" for direction in turns(ws["layout"], coming[0])]
             ws = {**ws, "layout": coming[0]}
-        after, way, nest = (self.plan(ws, name, ids) if not covered(ws) else None) or (ids[-1], None, None)
-        wanted[AFTER + code] = after
+        anchor, way, nest = (self.plan(ws, name, coming) if not covered(ws) else None) or (ids[-1], None, None)
+        wanted[AFTER + code] = anchor
         role = "both" if way and nest else "turn" if way else "nest" if nest else "none"
         values = (f"_layout_{role}_{code}", way or "right", layout_command(nest)[7:] if nest else "splith")
         if self.roles.get(name) != values:
@@ -1154,9 +1151,8 @@ class Daemon:
             wanted[SIZED + code] = ids[0]
         return commands
 
-    def plan(self, workspace, name, ids):
+    def plan(self, workspace, name, target):
         """`foresee` for the next window of the workspace, worked out again only when the workspace changes."""
-        target = self.target(name, [*ids, NEXT])
         key = (workspace["layout"], shape(workspace), target)
         if self.foreseen.get(name, (None,))[0] != key:
             self.foreseen[name] = (key, foresee(workspace, target))
@@ -1229,14 +1225,13 @@ class Daemon:
         where = {node["id"]: ws["name"] for ws in workspaces(tree) for node in windows(ws)}
         local = moved and new in where and self.where.get(new) == where[new]
         (carried, name), self.carried = self.carried, (None, None)
-        landed = where.get(carried) == name and self.where.get(carried) != name
+        # Put in its place already by `move_to`.
+        landed = new == carried and where.get(carried) == name and self.where.get(carried) != name
         self.where = where
         self.names = {ws["id"]: ws["name"] for ws in workspaces(tree)}
-        if landed and new == carried:
-            return False, None
         if local and self.syncing is not None:
             return True, None
-        if not moved or local:
+        if not moved or local or landed:
             return False, None
         if new in self.order:
             self.order.remove(new)
@@ -1290,19 +1285,16 @@ class Daemon:
         self.order[:] = [con for con in self.order if con in self.tiled]
         self.order += [con for ids in tiles.values() for con in ids if con not in self.order]
         for workspace in workspaces(tree):
-            name = workspace["name"]
-            if covered(workspace) or self.tiling(name) is None:
-                continue
-            if ids := self.ordered(tiles[workspace["id"]]):
+            if not covered(workspace) and self.tiling(workspace["name"]) is not None and (ids := self.ordered(tiles[workspace["id"]])):
                 self.inspect(workspace, ids, arrived)
-        focused, shown, shaped = focused_node(tree)["id"], visible(tree), False
+        focused, onscreen, shaped = focused_node(tree)["id"], visible(tree), False
         for workspace in workspaces(tree):
             name = workspace["name"]
             ids = self.ordered(tiles[workspace["id"]])
             if covered(workspace):
                 continue
             if self.chosen(name) == "float":
-                self.float_all(workspace, [con for con in ids if con not in self.kept], new, name in shown)
+                self.float_all(workspace, [con for con in ids if con not in self.kept], new, name in onscreen)
             elif self.tiling(name) is not None:
                 tree_shape = shape(workspace)
                 # The tile rule gave the master its saved size as the new
@@ -1313,7 +1305,7 @@ class Daemon:
                     self.measure(workspace, ids, new)
                 shaped = self.shape_up(workspace, ids, new, focused) or shaped
         tree = self.sway.tree() if shaped else tree
-        self.sway.command(*self.anchors(tree, {ws["id"]: tiled(ws) for ws in workspaces(tree)}))
+        self.sway.command(*self.anchors(tree))
         self.record(tree)
         self.remember()
         if shaped:
@@ -1356,18 +1348,18 @@ class Daemon:
         self.carried = (con, name)
         command = native if target else f"move container to workspace {quoted(name)}, focus"
         floats = self.state["workspaces"].get(name, self.state["layout"]) == "float"
-        tiles = [f"[con_id={con}] unmark {FLOATED}{con}, floating disable"] if floated and not floats else []
+        unfloat = [f"[con_id={con}] unmark {FLOATED}{con}, floating disable"] if floated and not floats else []
         if floats and name in visible(tree):
             geometry, rule = self.cascading(destination)
             self.where[con] = name
             self.sway.command(f"[con_id={con}] floating enable, mark --add {FLOATED}{con}, resize set {geometry[0]} px {geometry[1]} px, "
                               f"{command}, move absolute position {geometry[2]} px {geometry[3]} px", *away, *rule)
             self.insist(f"[con_id={con}] {placement(*geometry)}")
-        elif steps and (node["type"] == "con" or tiles):
-            self.sway.command(*tiles, *steps, *away, *([f"[con_id={con}] focus"] if direction else []))
+        elif steps and (node["type"] == "con" or unfloat):
+            self.sway.command(*unfloat, *steps, *away, *([f"[con_id={con}] focus"] if direction else []))
             self.record(self.sway.tree())
-        elif tiles:
-            self.sway.command(f"{tiles[0]}, {command}")
+        elif unfloat:
+            self.sway.command(f"{unfloat[0]}, {command}")
         else:
             # Into a workspace with no layout, no windows or a fullscreen one:
             # sway's own moves, which enter at the near edge, where `move
