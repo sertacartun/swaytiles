@@ -831,16 +831,16 @@ def facing(node, direction):
     return [leaf for child in node[1] for leaf in facing(child, direction)]
 
 
-def middles(node, along, low=0.0, high=1.0):
-    """Where the middle of each window of a layout falls across the
-    workspace, as a share of it, in the splits `along` that way. Tabs and
-    stacked titles all fill the same space."""
+def holder(node, leaf):
     if isinstance(node, int):
-        return {node: (low + high) / 2}
-    kind, children = node
-    step = (high - low) / len(children) if kind in along else 0
-    return {leaf: middle for index, child in enumerate(children)
-            for leaf, middle in middles(child, along, low + index * step, low + (index + 1) * step if step else high).items()}
+        return None
+    return node[0] if leaf in node[1] else next(filter(None, (holder(child, leaf) for child in node[1])), None)
+
+
+def last_focused(node):
+    while node["nodes"]:
+        node = next((child for id in node["focus"] for child in node["nodes"] if child["id"] == id), node["nodes"][0])
+    return node["id"]
 
 
 def floater(workspace, node, direction):
@@ -1349,8 +1349,7 @@ class Daemon:
             return self.sway.command(f"[con_id={con}] {native}")
         name = destination["name"]
         away = self.leaving(source, node) if managed else []
-        across = ("y", "height") if direction in ("left", "right") else ("x", "width")
-        steps = self.entering(destination, con, direction, node["rect"][across[0]] + node["rect"][across[1]] / 2)
+        steps = self.entering(destination, con, direction)
         self.carried = (con, name)
         command = native if target else f"move container to workspace {quoted(name)}, focus"
         floats = self.state["workspaces"].get(name, self.state["layout"]) == "float"
@@ -1373,26 +1372,26 @@ class Daemon:
             count = direction and presses(source, con, direction)
             self.sway.command(f"[con_id={con}] " + (", ".join([native] * count) if count else command), *away)
 
-    def entering(self, workspace, con, heading=None, middle=None):
+    def entering(self, workspace, con, heading=None):
         """The commands that take `con` from wherever it is to its place in
         the layout of `workspace`, in one step, so sway never draws it where
         it would put it first, next to the focused window there. Coming in
-        through an edge, it goes on straight: of the places the layout puts
-        at that edge, it takes the one level with where it was, `middle`
-        where its middle was across the screens as they are laid out.
-        Otherwise it joins the end of the order."""
+        through an edge, it takes the place the layout puts at that edge
+        next to the focused window there, before it on a move right or down
+        and after it on a move left or up. Tabs and stacked titles take it
+        at the near end. Otherwise it joins the end of the order."""
         name = workspace["name"]
         ids = [other for other in self.ordered(tiled(workspace)) if other != con]
         layout = self.tiling(name)
-        (start, size), along = (("y", "height"), ("splitv",)) if heading in ("left", "right") else (("x", "width"), ("splith",))
-        area = workspace["rect"]
-
-        def off(place):
-            built = normalize(layout([*ids[:place], con, *ids[place:]]))
-            return abs(area[start] + middles(built, along)[con] * area[size] - middle) if con in facing(built, heading) else math.inf
-        # Even, it takes the near end, as sway's own `move` does.
         near = heading in ("right", "down")
-        at = min(range(len(ids) + 1), key=lambda place: (off(place), place if near else -place)) if heading and layout else len(ids)
+
+        def built(place):
+            return normalize(layout([*ids[:place], con, *ids[place:]]))
+        edge = [place for place in range(len(ids) + 1) if con in facing(built(place), heading)] if heading and layout else []
+        focused = last_focused(workspace)
+        tabs = edge and holder(built(edge[0]), con) in TABBED
+        want = ids.index(focused) + (not near) if focused in ids and not tabs else 0 if near else len(ids)
+        at = min(edge, key=lambda place: (abs(place - want), place if near else -place), default=len(ids))
         self.order[:] = [other for other in self.order if other != con]
         self.order.insert(self.order.index(ids[at]) if at < len(ids) else len(self.order), con)
         if not ids or layout is None or covered(workspace):
