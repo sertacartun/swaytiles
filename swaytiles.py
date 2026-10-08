@@ -109,7 +109,7 @@ class Sway:
         results = self.request(self.COMMAND, joined)
         for result in results:
             if result.get("parse_error"):
-                print(f"layout: sway rejected {joined!r}: {result.get('error')}", file=sys.stderr, flush=True)
+                print(f"swaytiles: sway rejected {joined!r}: {result.get('error')}", file=sys.stderr, flush=True)
         return results
 
     def tree(self):
@@ -364,7 +364,7 @@ def bare(node):
 
 
 def outline(node):
-    return None if node is None else plain(trimmed(node))
+    return plain(trimmed(node))
 
 
 def layout_command(layout):
@@ -831,12 +831,6 @@ def facing(node, direction):
     return [leaf for child in node[1] for leaf in facing(child, direction)]
 
 
-def holder(node, leaf):
-    if isinstance(node, int):
-        return None
-    return node[0] if leaf in node[1] else next(filter(None, (holder(child, leaf) for child in node[1])), None)
-
-
 def path(node, leaf):
     if node == leaf:
         return []
@@ -1083,20 +1077,21 @@ class Daemon:
     def tile_rule(self, name, active):
         if self.anchored.get(name) == active or (not active and name not in self.anchored):
             return []
-        variable = f"$layout_tile_{encoded(name)}"
+        code = encoded(name)
+        variable = f"$layout_tile_{code}"
         commands = [] if self.anchored else ["set $layout_gate _layout_off", 'for_window [all] "mark --add $$layout_gate; unmark $$layout_gate"',
                                              "[all] mark --add _layout_arm", "unmark _layout_arm", "set $layout_gate _layout_fresh"]
-        commands.append(f"set {variable} {AFTER + encoded(name) if active else '_layout_off'}")
-        code = encoded(name)
+        commands.append(f"set {variable} {AFTER + code if active else '_layout_off'}")
         role, way, inner = f"$layout_role_{code}", f"$layout_way_{code}", f"$layout_inner_{code}"
         if not active:
             commands.append(f"set {role} _layout_none_{code}")
             self.roles.pop(name, None)
         if name not in self.anchored:
             # The window goes right after the anchor, turns the workspace with
-            # a move or nests in a container, as `foresee` planned, so it is drawn in its place
-            # from the first frame. Each step is used once: sway keeps the rules
-            # of every daemon that ran since it last read its config.
+            # a move or nests in a container, as `foresee` planned, so it is
+            # drawn in its place from the first frame. Each step is used once:
+            # sway keeps the rules of every daemon that ran since it last read
+            # its config.
             axis, share = f"$layout_axis_{code}", f"$layout_share_{code}"
             commands += [f"set {axis} width", f"set {share} 50", f"set {role} _layout_none_{code}", f"set {way} right", f"set {inner} splith"]
             fresh = "[con_mark=^_layout_fresh$]"
@@ -1248,14 +1243,14 @@ class Daemon:
             self.order.append(new)
         return False, new
 
-    def release(self, tree, new, moved):
+    def release(self, tree, arrived):
         commands = []
         for ws in workspaces(tree):
             for node in ws["floating_nodes"]:
                 mark = f"{FLOATED}{node['id']}"
                 if mark in node["marks"] and self.chosen(ws["name"]) != "float":
                     commands.append(f"[con_id={node['id']}] unmark {mark}, floating disable, opacity 1")
-                elif mark in node["marks"] and moved and node["id"] == new:
+                elif mark in node["marks"] and node["id"] == arrived:
                     commands.append(f"[con_id={node['id']}] unmark {mark}")
         self.sway.command(*commands)
         return self.sway.tree() if commands else tree
@@ -1286,7 +1281,7 @@ class Daemon:
         skip, arrived = self.placed(tree, new, moved)
         if skip:
             return self.remember()
-        tree = self.release(tree, new, moved and arrived is not None)
+        tree = self.release(tree, arrived)
         tiles = {ws["id"]: tiled(ws) for ws in workspaces(tree)}
         self.kept = {con: ws["name"] for ws in workspaces(tree) for con in tiles[ws["id"]]
                      if self.kept.get(con) == ws["name"] and self.chosen(ws["name"]) == "float"}
@@ -1341,6 +1336,7 @@ class Daemon:
         con = node["id"]
         floated = f"{FLOATED}{con}" in node["marks"]
         managed = node["type"] == "con" and self.tiling(source["name"]) is not None and not covered(source)
+        count = direction and node["type"] == "con" and presses(source, con, direction)
         if direction and managed:
             other = beside(source, node, direction, self.order)
             if other is not None:
@@ -1349,14 +1345,13 @@ class Daemon:
             if destination is None:
                 return None
         elif direction:
-            crossing = floated or (node["type"] == "con" and presses(source, con, direction) is not None)
-            destination = neighbour(tree, source, direction) if crossing else None
+            destination = neighbour(tree, source, direction) if floated or count else None
         else:
             destination = resolve(tree, target)
         if destination is None or destination["id"] == source["id"]:
             return self.sway.command(f"[con_id={con}] {native}")
         name = destination["name"]
-        away = self.leaving(source, node) if managed else []
+        away = self.leaving(source, node)
         steps = self.entering(destination, con, direction)
         self.carried = (con, name)
         command = native if target else f"move container to workspace {quoted(name)}, focus"
@@ -1374,22 +1369,21 @@ class Daemon:
         elif tiles:
             self.sway.command(f"{tiles[0]}, {command}")
         else:
-            # Into a workspace with no layout: sway's own moves, which enter
-            # at the near edge, where `move container to workspace` would put
-            # it next to the focused window.
-            count = direction and presses(source, con, direction)
+            # Into a workspace with no layout, no windows or a fullscreen one:
+            # sway's own moves, which enter at the near edge, where `move
+            # container to workspace` would put it next to the focused window.
             self.sway.command(f"[con_id={con}] " + (", ".join([native] * count) if count else command), *away)
 
     def entering(self, workspace, con, heading=None):
         """The commands that take `con` from wherever it is to its place in
         the layout of `workspace`, in one step, so sway never draws it where
         it would put it first, next to the focused window there. Coming in
-        through an edge, it takes the place the layout puts at that edge
-        next to the focused window there, or the window at the edge in the
-        same part of the layout, before it on a move right or down and
-        after it on a move left or up; with neither, and into tabs and
-        stacked titles, the near end. Otherwise it joins the end of the
-        order."""
+        through an edge, it takes one of the places the layout puts at that
+        edge, the nearest one beside the window there that shares the most
+        of its branch with the workspace's last focused window, before it on
+        a move right or down and after it on a move left or up; when none
+        shares a branch, and into tabs and stacked titles, the near end.
+        Otherwise it joins the end of the order."""
         name = workspace["name"]
         ids = [other for other in self.ordered(tiled(workspace)) if other != con]
         layout = self.tiling(name)
@@ -1397,14 +1391,14 @@ class Daemon:
 
         def built(place):
             return normalize(layout([*ids[:place], con, *ids[place:]]))
-        edge = [place for place in range(len(ids) + 1) if con in facing(built(place), heading)] if heading and layout else []
+        edge = [place for place in range(len(ids) + 1) if con in facing(built(place), heading)] if ids and heading and layout else []
         at = (min if near else max)(edge, default=len(ids))
-        if edge and holder(built(edge[0]), con) not in TABBED:
+        if edge and parent_of(built(edge[0]), con)[0] not in TABBED:
             # Beside the window at the edge that is the focused one, or
             # shares the most of its branch; none shares any: the near end.
-            shape, focus = normalize(layout(ids)), path(normalize(layout(ids)), last_focused(workspace))
-            shared = {leaf: len(os.path.commonprefix([path(shape, leaf), focus])) if focus is not None else 0
-                      for leaf in facing(shape, heading)}
+            now = normalize(layout(ids))
+            focus = path(now, last_focused(workspace)) or []
+            shared = {leaf: len(os.path.commonprefix([path(now, leaf), focus])) for leaf in facing(now, heading)}
             by = max(shared, key=lambda leaf: (shared[leaf], -ids.index(leaf) if near else ids.index(leaf)))
             if shared[by]:
                 want = ids.index(by) + (not near)
@@ -1440,8 +1434,8 @@ class Daemon:
         native = "move scratchpad" if mode == "scratchpad" else f"floating {mode}"
         floating = node["type"] == "floating_con"
         joins = floating and mode in ("toggle", "disable")
-        leaves = not floating and mode in ("toggle", "enable", "scratchpad")
-        if source is None or node["nodes"] or not (joins or leaves):
+        quits = not floating and mode in ("toggle", "enable", "scratchpad")
+        if source is None or node["nodes"] or not (joins or quits):
             return self.sway.command(native)
         con = node["id"]
         if joins:
@@ -1503,8 +1497,9 @@ class Daemon:
             self.exchange(node["id"], ids[1] if node["id"] == ids[0] else ids[0])
 
     def exchange(self, con, other):
-        first, second = self.order.index(con), self.order.index(other)
-        self.order[first], self.order[second] = other, con
+        if con in self.order and other in self.order:
+            first, second = self.order.index(con), self.order.index(other)
+            self.order[first], self.order[second] = other, con
         self.sway.command(f"[con_id={con}] swap container with con_id {other}")
         self.sync()
         self.arrange()
@@ -1547,8 +1542,7 @@ class Daemon:
         tree = sway.tree()
         commands = [command for name in list(self.rules) for command in self.float_rule(name, None)]
         commands += [command for name in list(self.anchored) for command in self.tile_rule(name, False)]
-        marks = marked(tree, PLACING)
-        sway.command(*commands, *(f"[con_id={con}] opacity 1" for con in invisible(tree)), *(f"unmark {mark}" for mark in marks))
+        sway.command(*commands, *(f"[con_id={con}] opacity 1" for con in invisible(tree)), *(f"unmark {mark}" for mark in marked(tree, PLACING)))
 
     def recover(self):
         self.sway.command(*(f"[con_id={con}] opacity 1" for con in invisible(self.sway.tree())))
@@ -1602,11 +1596,8 @@ class Daemon:
             if change == "rename":
                 self.rename(event["current"])
             if change == "reload":
-                self.rules.clear()
-                self.anchored.clear()
-                self.sized.clear()
-                self.roles.clear()
-                self.adopted.clear()
+                for table in (self.rules, self.anchored, self.sized, self.roles, self.adopted):
+                    table.clear()
                 self.adopt()
             self.arrange()
         elif kind == "window" and change == "focus":
@@ -1632,7 +1623,8 @@ class Daemon:
 
     def adopt(self):
         """Put the layout's moves on the keys that the config binds to sway's
-        own `move`. Bindings made at runtime last until sway reloads."""
+        own `move`, `move scratchpad` and `floating`. Bindings made at
+        runtime last until sway reloads."""
         self.give_back(self.sway)
         if not self.keys:
             return
@@ -1645,7 +1637,8 @@ class Daemon:
         self.sway.command(*(f"{prefix} {following(command)}" for prefix, command in self.adopted.values()))
 
     def learn(self, binding, command):
-        """A move key the config reader missed: take it over once it is used."""
+        """A key for a move, the scratchpad or floating that the config reader
+        missed: take it over once it is used."""
         if not self.keys or binding.get("input_type") != "keyboard" or not binding.get("symbol"):
             return
         prefix = "bindsym " + "+".join([*binding.get("event_state_mask", []), binding["symbol"]])

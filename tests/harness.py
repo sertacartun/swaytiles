@@ -120,7 +120,9 @@ class Session:
             self.daemon = subprocess.Popen([sys.executable, str(COUNTED)], env={**self.env, "SWAYTILES_SENT": str(self.sent)},
                                            stdout=subprocess.DEVNULL,
                                            stderr=errors, start_new_session=True)
-        self.wait(self.locked, 5)
+        # Under a parallel run the start can be slow: wait for the lock, or
+        # for a daemon that gave up.
+        self.wait(lambda: self.locked() or self.daemon.poll() is not None, 15)
         time.sleep(0.2)
         self.settle()
 

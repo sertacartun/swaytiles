@@ -11,9 +11,10 @@ def session(tmp_path):
     started = []
 
     def start(layout="master", **options):
-        instance = Session(tmp_path / str(len(started)), layout, **options).start()
+        instance = Session(tmp_path / str(len(started)), layout, **options)
+        # Kept before it starts, so a sway left by a failed start is stopped.
         started.append(instance)
-        return instance
+        return instance.start()
 
     yield start
     for instance in started:

@@ -223,7 +223,7 @@ next window does not bring back the old one.
 
 Some steps go in one message with a command whose result the daemon
 cannot read first: the tile rule's plan, the windows left behind by one
-that moves away, the window that comes back. So the daemon works them
+that moves away, the window that comes in. So the daemon works them
 out on a copy of the workspace's tree in sway's own form, with the few
 commands it uses: put a window after another (`move to mark`), take one
 out (a container left empty goes, one left with a single child stays),
@@ -286,20 +286,21 @@ layout:
    container`, which keeps the sizes.
 3. At the edge, `neighbour` finds the workspace on the next output and
    the window moves there. Of the places the layout puts at the edge it
-   comes in through (`facing`), it takes the one beside the window
-   there that is the focused one or shares the most of its branch
-   (`path`), before it on a move right or down and after it on a move
-   left or up, as sway's own `move` does where the tree lets it choose.
-   When no window at that edge shares any of it, and into tabs and
-   stacked titles, it takes the near end. Moving right into `master`
-   makes it the master, the only place at that edge; into `wide` the
-   master or the first of the stack, as the focus there is on the one
-   or the other; into `grid` the start of the focused row; into the
-   stack of `master-right` beside the focused window, or at its top. Into a workspace with no layout the daemon sends
-   sway's own `move`, as many times as it takes to leave the workspace
-   (`presses`), and sway puts it. On a move to a workspace by name or
-   number it joins the end of the stack. A move in a direction takes the
-   focus along, like sway's own. It is recorded as `carried` until the next look at the tree, so
+   comes in through (`facing`), it takes the one beside the window there
+   that is the focused one or shares the most of its branch (`path`),
+   before it on a move right or down and after it on a move left or up,
+   as sway's own `move` does where the tree lets it choose. When no
+   window at that edge shares any of it, and into tabs and stacked
+   titles, it takes the near end. Moving right into `master` makes it
+   the master, the only place at that edge; into `wide` the master or
+   the first of the stack, as the focus there is on the one or the
+   other; into `grid` the start of the focused row; into the stack of
+   `master-right` beside the focused window, or at its top. Into a
+   workspace with no layout the daemon sends sway's own `move`, as many
+   times as it takes to leave the workspace (`presses`), and sway puts
+   it. On a move to a workspace by name or number it joins the end of
+   the stack. A move in a direction takes the focus along, like sway's
+   own. It is recorded as `carried` until the next look at the tree, so
    it does not keep a drop point.
 
 Every window the daemon moves itself goes in one command with all it
@@ -308,7 +309,7 @@ window in a passing place:
 
 - `leaving` puts the windows it leaves behind in order, worked out on
   the model of the workspace without it.
-- `entering` takes it straight to its place: `move to mark` after the
+- `entering` takes it to its place in one step: `move to mark` after the
   last window of the workspace it goes to and the steps of `assemble`,
   worked out on the model of that workspace with it. Without this, sway
   would first tile it next to the focused window there.
@@ -323,8 +324,8 @@ with the hole.
 `nop layout master` is the same swap, with the master. On workspaces
 without a layout, a move is sway's own, except that `presses` predicts
 when sway would send the window to another output and the daemon does
-it in one step, so it can be floated first when the target is a float
-workspace.
+it in one step, so it takes its place in the target's layout, or is
+floated first on a float workspace.
 
 ## Float workspaces
 
@@ -388,7 +389,10 @@ every test, `conftest.py` checks that the daemon logged no error and
 let no workspace go (switched it to `default`) unless the test expected it.
 The daemon is started through `tests/daemon.py`, which imports it as the
 installed launcher does and writes every command message it sends to a
-file, so `drawn` can count the transactions an action costs.
+file, so `drawn` can count the transactions an action costs. Each test
+runs its own sway in its own runtime directory, so they run side by side
+(`-n auto --maxprocesses 8` in `pyproject.toml`; `-n 0` runs them one at
+a time).
 
 | File | Covers |
 | --- | --- |
@@ -398,7 +402,11 @@ file, so `drawn` can count the transactions an action costs.
 | `test_drag.py` | mouse drags, through a virtual pointer (`tests/pointer.py`) |
 | `test_promote.py` | swapping with the master |
 | `test_float.py` | float workspaces |
-| `test_outputs.py` | two outputs of different sizes and scales |
+| `test_outputs.py` | two outputs of different sizes and scales, and windows moved between them |
+| `test_keys.py` | taking over the config's move keys |
+| `test_isolation.py` | one workspace never touching another |
+| `test_wait.py` | `--wait` across sway sessions |
+| `test_smoke.py` | a quick check that the daemon starts and places a window |
 | `test_edge.py`, `test_compat.py` | situations that broke other layout daemons |
 | `test_safety.py` | one daemon per session, broken state, crashes |
 

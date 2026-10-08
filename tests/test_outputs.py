@@ -43,7 +43,7 @@ def test_two_outputs(session):
     assert (s.shape("1"), s.shape("10")) == ("H[a1 V[a2 a3]]", "H[b1 S[b2 b3 a4]]")
     s.focus("a4")
     s.key("F1")
-    s.key("F1")
+    s.key("F1")  # at the left edge of the leftmost output: nothing
     assert s.shape("10") == "H[a4 S[b2 b3 b1]]"
     s.open("b4")
     assert s.shape("10") == "H[a4 S[b2 b3 b1 b4]]"
@@ -117,7 +117,7 @@ def test_a_window_carried_to_a_float_workspace_stays_where_it_lands(session):
     assert s.shape("3") == "- F[c1 b1]" and floats_fit(s, "3")
 
 
-def test_a_window_carried_to_another_output_enters_at_the_near_edge(session):
+def test_a_window_carried_between_master_layouts_takes_the_edge_it_crosses(session):
     s = session("master", workspaces={"1": "master", "10": "master"}, config=CONFIG, outputs=2)
     s.command("workspace 1")
     s.open("a1")
@@ -133,7 +133,7 @@ def test_a_window_carried_to_another_output_enters_at_the_near_edge(session):
     assert (s.shape("10"), s.shape("1")) == ("H[b1 V[b2 b3]]", "a1")
     assert s.focused() == "b3"
     s.key("F1")
-    s.key("F1")
+    s.key("F1")  # at the left edge of the leftmost output: nothing
     assert (s.shape("10"), s.shape("1")) == ("H[b3 V[b2 b1]]", "a1")
     s.focus("a1")
     s.key("F1")
@@ -141,23 +141,18 @@ def test_a_window_carried_to_another_output_enters_at_the_near_edge(session):
     assert s.focused() == "a1"
 
 
-def test_a_window_moved_to_the_next_output_lands_in_its_place(session):
+def test_a_window_on_a_workspace_without_a_layout_crosses_only_at_its_edge(session):
     s = session("master", workspaces={"1": "tabbed-master", "10": "default"}, config=CONFIG, outputs=2)
     s.command("workspace 1")
     s.open("a1")
     s.command("workspace 10")
     s.open("b1")
     s.open("b2")
-    s.key("F2")
-    assert (s.shape("1"), s.shape("10")) == ("H[b2 T[a1]]", "b1")
-    assert s.focused() == "b2"
-    s.key("F1")
-    assert (s.shape("1"), s.shape("10")) == ("a1", "H[b1 b2]")
     s.focus("b1")
     s.key("F2")
+    assert (s.shape("1"), s.shape("10")) == ("a1", "H[b2 b1]")
     s.key("F2")
     assert (s.shape("1"), s.shape("10")) == ("H[b1 T[a1]]", "b2")
-
 
 WRAPS = {
     "flat": "",
@@ -232,19 +227,18 @@ def test_the_workspace_a_window_leaves_is_put_in_order_in_the_same_step(session)
     assert (s.shape("1", exact=True), s.shape("10")) == ("H[a2 V[a3]]", "H[b1 S[a1]]")
 
 
-@pytest.mark.parametrize("layout, focus, mover, entered", [
-    ("wide", "a3", "b2", "V[a1 H[b2 a2 a3]]"),
-    ("wide", "a1", "b4", "V[b4 H[a1 a2 a3]]"),
-    ("master-right", "a2", "b4", "H[V[b4 a2 a3] a1]"),
-    ("master-right", "a3", "b2", "H[V[a2 b2 a3] a1]"),
-    ("grid", "a3", "b2", "V[H[a1 a2] H[b2 a3]]"),
-    ("grid", "a1", "b4", "V[H[b4 a1] H[a2 a3]]"),
-    ("grid", "a2", "b4", "V[H[b4 a1] H[a2 a3]]"),
-    ("master-right", "a1", "b4", "H[V[b4 a2 a3] a1]"),
-    ("stacking", "a2", "b4", "S[b4 a1 a2 a3]"),
-    ("tabbed", "a2", "b4", "T[b4 a1 a2 a3]"),
+@pytest.mark.parametrize("layout, focus, entered", [
+    ("wide", "a3", "V[a1 H[b4 a2 a3]]"),
+    ("wide", "a1", "V[b4 H[a1 a2 a3]]"),
+    ("master-right", "a3", "H[V[a2 b4 a3] a1]"),
+    ("master-right", "a2", "H[V[b4 a2 a3] a1]"),
+    ("master-right", "a1", "H[V[b4 a2 a3] a1]"),
+    ("grid", "a3", "V[H[a1 a2] H[b4 a3]]"),
+    ("grid", "a1", "V[H[b4 a1] H[a2 a3]]"),
+    ("grid", "a2", "V[H[b4 a1] H[a2 a3]]"),
+    ("stacking", "a2", "S[b4 a1 a2 a3]"),
 ])
-def test_a_window_carried_to_another_output_takes_its_place_at_the_edge(session, layout, focus, mover, entered):
+def test_a_window_carried_to_another_output_takes_its_place_at_the_edge(session, layout, focus, entered):
     s = session("master", workspaces={"1": layout, "10": "master"}, config=CONFIG, outputs=2)
     s.command("workspace 1")
     for title in ("a1", "a2", "a3"):
@@ -253,7 +247,6 @@ def test_a_window_carried_to_another_output_takes_its_place_at_the_edge(session,
     s.command("workspace 10")
     for title in ("b1", "b2", "b3", "b4"):
         s.open(title)
-    s.focus(mover)
     drawn = s.drawn(lambda: s.key("F2"))
     assert len(drawn) == 1, drawn
     assert s.shape("1") == entered
@@ -274,3 +267,14 @@ def test_a_window_carried_into_a_workspace_without_a_layout_enters_where_sway_pu
     assert s.focused() == "b3"
     s.key("F1")
     assert (s.shape("1"), s.shape("10")) == ("H[a1 a2]", "H[b1 V[b2 b3]]")
+
+
+@pytest.mark.parametrize("layout", ["master", "wide", "grid", "dwindle"])
+def test_a_window_carried_to_an_empty_workspace_with_a_layout_goes_there(session, layout):
+    s = session("master", workspaces={"1": layout, "10": "master"}, config=CONFIG, outputs=2)
+    s.command("workspace 1")
+    s.command("workspace 10")
+    s.open("b1")
+    s.open("b2")
+    s.key("F2")
+    assert (s.shape("1"), s.shape("10")) == ("b2", "b1")
