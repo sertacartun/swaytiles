@@ -137,7 +137,7 @@ def test_a_window_carried_to_another_output_enters_at_the_near_edge(session):
     assert (s.shape("10"), s.shape("1")) == ("H[b3 V[b2 b1]]", "a1")
     s.focus("a1")
     s.key("F1")
-    assert (s.shape("10"), s.shape("1")) == ("H[b3 V[a1 b2 b1]]", "-")
+    assert (s.shape("10"), s.shape("1")) == ("H[b3 V[b2 b1 a1]]", "-")
     assert s.focused() == "a1"
 
 
@@ -239,6 +239,8 @@ def test_the_workspace_a_window_leaves_is_put_in_order_in_the_same_step(session)
     ("master-right", "a3", "b2", "H[V[a2 b2 a3] a1]"),
     ("grid", "a3", "b2", "V[H[a1 a2] H[b2 a3]]"),
     ("grid", "a1", "b4", "V[H[b4 a1] H[a2 a3]]"),
+    ("grid", "a2", "b4", "V[H[b4 a1] H[a2 a3]]"),
+    ("master-right", "a1", "b4", "H[V[b4 a2 a3] a1]"),
     ("stacking", "a2", "b4", "S[b4 a1 a2 a3]"),
     ("tabbed", "a2", "b4", "T[b4 a1 a2 a3]"),
 ])

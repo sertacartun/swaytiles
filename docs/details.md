@@ -50,10 +50,11 @@ swaytiles config          # print lines for the sway config
 `swaytiles move left|right|up|down` swaps the focused window with its
 neighbour in that direction, so the layout always stays whole. Inside
 tabs it reorders the tabs first. At the edge of the workspace it moves
-the window to the next output and the focus goes with it; there it
-becomes the master when the master is what lies at the edge it comes in
-through, and joins the end of the stack otherwise. On a workspace without a layout it is
-sway's own `move`. `swaytiles move number N` sends the window to a
+the window to the next output and the focus goes with it. There it
+comes in at the edge it crosses, beside the window you last focused on
+that workspace (or the one at that edge in the same column or row as
+it), and at the near end of tabs and stacked titles. On a workspace
+without a layout it is sway's own `move`. `swaytiles move number N` sends the window to a
 workspace, where it joins the stack or floats, as that workspace's
 layout says. `swaytiles swap` swaps the focused window with the
 master; on the master itself it swaps with the top of the stack. Sizes

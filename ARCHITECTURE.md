@@ -286,15 +286,16 @@ layout:
    container`, which keeps the sizes.
 3. At the edge, `neighbour` finds the workspace on the next output and
    the window moves there. Of the places the layout puts at the edge it
-   comes in through (`facing`), it takes the one next to the focused
-   window there, before it on a move right or down and after it on a
-   move left or up, as sway's own `move` does where the tree lets it
-   choose. Moving right into `master` makes it the master, the only
-   place at that edge; into `wide` the master or the first of the stack,
-   as the focus there is on the one or the other; into the stack of
-   `master-right`, `centered` or `grid`, beside the focused window, or
-   at the nearest place at the edge to it. Tabs and stacked titles take
-   it at the near end. Into a workspace with no layout the daemon sends
+   comes in through (`facing`), it takes the one beside the window
+   there that is the focused one or shares the most of its branch
+   (`path`), before it on a move right or down and after it on a move
+   left or up, as sway's own `move` does where the tree lets it choose.
+   When no window at that edge shares any of it, and into tabs and
+   stacked titles, it takes the near end. Moving right into `master`
+   makes it the master, the only place at that edge; into `wide` the
+   master or the first of the stack, as the focus there is on the one
+   or the other; into `grid` the start of the focused row; into the
+   stack of `master-right` beside the focused window, or at its top. Into a workspace with no layout the daemon sends
    sway's own `move`, as many times as it takes to leave the workspace
    (`presses`), and sway puts it. On a move to a workspace by name or
    number it joins the end of the stack. A move in a direction takes the

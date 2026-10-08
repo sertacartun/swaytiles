@@ -837,6 +837,14 @@ def holder(node, leaf):
     return node[0] if leaf in node[1] else next(filter(None, (holder(child, leaf) for child in node[1])), None)
 
 
+def path(node, leaf):
+    if node == leaf:
+        return []
+    if isinstance(node, int):
+        return None
+    return next(([index, *rest] for index, child in enumerate(node[1]) if (rest := path(child, leaf)) is not None), None)
+
+
 def last_focused(node):
     while node["nodes"]:
         node = next((child for id in node["focus"] for child in node["nodes"] if child["id"] == id), node["nodes"][0])
@@ -1377,9 +1385,11 @@ class Daemon:
         the layout of `workspace`, in one step, so sway never draws it where
         it would put it first, next to the focused window there. Coming in
         through an edge, it takes the place the layout puts at that edge
-        next to the focused window there, before it on a move right or down
-        and after it on a move left or up. Tabs and stacked titles take it
-        at the near end. Otherwise it joins the end of the order."""
+        next to the focused window there, or the window at the edge in the
+        same part of the layout, before it on a move right or down and
+        after it on a move left or up; with neither, and into tabs and
+        stacked titles, the near end. Otherwise it joins the end of the
+        order."""
         name = workspace["name"]
         ids = [other for other in self.ordered(tiled(workspace)) if other != con]
         layout = self.tiling(name)
@@ -1388,10 +1398,17 @@ class Daemon:
         def built(place):
             return normalize(layout([*ids[:place], con, *ids[place:]]))
         edge = [place for place in range(len(ids) + 1) if con in facing(built(place), heading)] if heading and layout else []
-        focused = last_focused(workspace)
-        tabs = edge and holder(built(edge[0]), con) in TABBED
-        want = ids.index(focused) + (not near) if focused in ids and not tabs else 0 if near else len(ids)
-        at = min(edge, key=lambda place: (abs(place - want), place if near else -place), default=len(ids))
+        at = (min if near else max)(edge, default=len(ids))
+        if edge and holder(built(edge[0]), con) not in TABBED:
+            # Beside the window at the edge that is the focused one, or
+            # shares the most of its branch; none shares any: the near end.
+            shape, focus = normalize(layout(ids)), path(normalize(layout(ids)), last_focused(workspace))
+            shared = {leaf: len(os.path.commonprefix([path(shape, leaf), focus])) if focus is not None else 0
+                      for leaf in facing(shape, heading)}
+            by = max(shared, key=lambda leaf: (shared[leaf], -ids.index(leaf) if near else ids.index(leaf)))
+            if shared[by]:
+                want = ids.index(by) + (not near)
+                at = min(edge, key=lambda place: (abs(place - want), place if near else -place))
         self.order[:] = [other for other in self.order if other != con]
         self.order.insert(self.order.index(ids[at]) if at < len(ids) else len(self.order), con)
         if not ids or layout is None or covered(workspace):
