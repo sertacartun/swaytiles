@@ -90,7 +90,7 @@ def test_the_menu_understands_every_kind_of_launcher():
     assert sl.picked_layout("99", names) is None
     assert sl.picked_layout("grid — Even grid  ●\n", names) == "grid"
     assert sl.picked_layout("", names) is None
-    assert sl.launcher("wofi", 13, 2) == (["wofi", "--dmenu", "--insensitive", "--prompt", "layout"], False)
+    assert sl.launcher("wofi", 13, 2) == (["wofi", "--dmenu", "--insensitive", "--prompt", "layout", "--cache-file", "/dev/null"], False)
     command, icons = sl.launcher("rofi", 13, 2)
     assert icons and command[-2:] == ["-selected-row", "2"]
     assert sl.launcher("rofi -dmenu", 13, 2) == (["rofi", "-dmenu"], False)

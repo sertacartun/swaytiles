@@ -1861,7 +1861,9 @@ def launcher(custom, count, selected):
         return command, True
     commands = {
         "rofi": (["rofi", "-dmenu", "-i", "-no-custom", "-format", "i", "-show-icons", "-p", "layout", "-selected-row", str(selected)], True),
-        "wofi": (["wofi", "--dmenu", "--insensitive", "--prompt", "layout"], False),
+        # wofi puts the entries picked most often first, keeping the count in a
+        # cache file; without one the menu keeps the order of the layouts.
+        "wofi": (["wofi", "--dmenu", "--insensitive", "--prompt", "layout", "--cache-file", "/dev/null"], False),
         "tofi": (["tofi", "--prompt-text", "layout: "], False),
         "bemenu": (["bemenu", "-i", "-l", str(count), "-p", "layout"], False),
         "wmenu": (["wmenu", "-i", "-l", str(count), "-p", "layout"], False),
