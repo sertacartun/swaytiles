@@ -10,7 +10,7 @@ import swaytiles
 NATIVE = ("set $mod Mod4\nset $left F1\n"
           "bindsym $mod+$left move left\nbindsym $mod+F2 move right\nbindsym $mod+F3 move up\nbindsym $mod+F4 move down\n"
           "bindsym $mod+F6 move container to workspace number 3\n"
-          "bindsym $mod+F7 floating toggle\nbindsym $mod+F9 move scratchpad\n")
+          "bindsym $mod+F7 floating toggle\nbindsym $mod+F9 move scratchpad\nbindsym $mod+F10 kill\n")
 
 
 def started(session, layout="master", count=4, config=NATIVE, **options):
@@ -62,8 +62,9 @@ def test_only_plain_moves_are_taken_over():
     assert swaytiles.following("move window to workspace web") == "nop layout move web"
     assert swaytiles.following("move  scratchpad") == "nop layout hide"
     assert swaytiles.following("floating toggle") == "nop layout float toggle"
+    assert swaytiles.following("kill") == "nop layout close"
     for command in ("move left 20 px", "move left; focus left", "move container to workspace next", "floating toggle, resize set 50 ppt",
-                    "[app_id=foot] floating toggle",
+                    "[app_id=foot] floating toggle", "[app_id=foot] kill",
                     "move container to workspace number", "move workspace to output left", "nop layout move left"):
         assert swaytiles.following(command) is None, command
 
@@ -149,3 +150,33 @@ def test_hiding_a_window_by_key_puts_its_layout_in_order_in_one_step(session):
     assert s.shape() == "H[w2 V[w3 w4]]"
     s.run("show")
     assert s.shape() == "H[w2 V[w3 w4 w1]]"
+
+
+def test_closing_a_window_by_key_puts_its_layout_in_order_in_one_step(session):
+    from harness import expected
+    s = started(session, "dwindle")
+    s.focus("w2")
+    drawn = s.drawn(lambda: s.key("F10"))
+    # Hidden, the others in their places and closed, in one message: sway never draws the hole.
+    assert len(drawn) == 1 and drawn[0].endswith("kill"), drawn
+    assert s.shape() == expected("dwindle", 3, ["w1", "w3", "w4"])
+
+
+def test_closing_the_last_window_by_key_is_left_to_sway(session):
+    s = started(session, "dwindle")
+    drawn = s.drawn(lambda: s.key("F10"))
+    # sway's own kill: the hole it leaves is the layout without it.
+    assert drawn == ["kill"]
+    assert s.node("w4") is None
+
+
+def test_a_window_that_will_not_close_comes_back(session):
+    from harness import expected
+    s = started(session, "dwindle", count=2)
+    s.open("stubborn")
+    s.open("w3")
+    s.focus("stubborn")
+    s.key("F10")
+    assert s.shape() == expected("dwindle", 3)
+    assert s.wait(lambda: s.shape() == expected("dwindle", 4, ["w1", "w2", "w3", "stubborn"]), 3), s.shape()
+    assert s.focused() == "stubborn"

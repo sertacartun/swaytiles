@@ -396,3 +396,28 @@ def test_a_master_resized_without_an_event_keeps_its_size_as_a_window_comes_in(s
         os.kill(s.daemon.pid, signal.SIGCONT)
     s.settle()
     assert s.width("w1") == 0.7
+
+
+def test_a_wide_master_in_the_middle_keeps_equal_sides(session):
+    s = session("master")
+    opened(s, 2)
+    s.command("[title=^w1$] resize set width 75 ppt")
+    s.choose("centered")
+    # sway takes a resize from every sibling alike: the third window evens the
+    # sides out before the master takes its share, in sway's own rule.
+    os.kill(s.daemon.pid, signal.SIGSTOP)
+    try:
+        s.open("w3", settle=False)
+        s.wait(lambda: False, 0.2)
+        assert s.shape() == "H[w3 w1 w2]"
+        assert s.width("w1") == 0.75
+        assert abs(s.width("w3") - s.width("w2")) <= 0.01
+    finally:
+        os.kill(s.daemon.pid, signal.SIGCONT)
+    assert not s.drawn(lambda: None)
+    # Closing a side gives its room back to the master: it keeps its share.
+    s.close("w3")
+    assert s.width("w1") == 0.75
+    s.open("w4")
+    assert s.width("w1") == 0.75
+    assert abs(s.width("w4") - s.width("w2")) <= 0.01
