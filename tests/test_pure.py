@@ -90,12 +90,15 @@ def test_the_menu_understands_every_kind_of_launcher():
     assert sl.picked_layout("99", names) is None
     assert sl.picked_layout("grid — Even grid  ●\n", names) == "grid"
     assert sl.picked_layout("", names) is None
-    assert sl.launcher("wofi", 13, 2) == (["wofi", "--dmenu", "--insensitive", "--prompt", "layout", "--cache-file", "/dev/null"], False)
+    command, icons = sl.launcher("wofi", 13, 2)
+    assert command[:7] == ["wofi", "--dmenu", "--insensitive", "--prompt", "layout", "--cache-file", "/dev/null"]
+    assert "dmenu-parse_action=true" in command and icons.format(entry="grid", icon="/g.svg") == "img:/g.svg:text:grid"
     command, icons = sl.launcher("rofi", 13, 2)
-    assert icons and command[-2:] == ["-selected-row", "2"]
-    assert sl.launcher("rofi -dmenu", 13, 2) == (["rofi", "-dmenu"], False)
-    assert sl.launcher("walker --dmenu", 13, 2) == (["walker", "--dmenu"], False)
-    assert sl.launcher("", 13, 2) == ([], False)
+    assert command[9:11] == ["-selected-row", "2"] and icons.format(entry="grid", icon="/g.svg") == "grid\0icon\x1f/g.svg"
+    assert sl.launcher("tofi", 13, 2)[1] is None
+    assert sl.launcher("rofi -dmenu", 13, 2) == (["rofi", "-dmenu"], None)
+    assert sl.launcher("walker --dmenu", 13, 2) == (["walker", "--dmenu"], None)
+    assert sl.launcher("", 13, 2) == ([], None)
 
 
 def test_fuzzel_gets_only_the_options_its_version_knows(monkeypatch):
@@ -125,22 +128,16 @@ def test_state_is_validated(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == [tmp_path / "state.json"]
 
 
-def test_the_icons_take_the_colour_of_fuzzels_text(tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("XDG_CONFIG_DIRS", str(tmp_path / "none"))
-    assert sl.fuzzel_text() is None
-    (tmp_path / "fuzzel").mkdir()
-    config = tmp_path / "fuzzel" / "fuzzel.ini"
-    config.write_text("[main]\ntext=11111111\n[colors]\nbackground=000000ff\nselection-text=ffffffff\n")
-    assert sl.fuzzel_text() is None
-    config.write_text("[colors]\n text = D8DEE9ff \n")
-    assert sl.fuzzel_text() == "#D8DEE9"
-    theme = tmp_path / "theme.ini"
-    theme.write_text(f"include={config}\n[colors]\ntext=abcdef80\n")
-    config.write_text(f"include={theme}\n[border]\nwidth=2\n")
-    assert sl.fuzzel_text() == "#abcdef"
-    config.write_text(f"include={theme}\n[colors]\ntext=nonsense\n")
-    assert sl.fuzzel_text() == "#abcdef"
+def test_the_icons_bring_their_own_colours(tmp_path, monkeypatch):
+    monkeypatch.setattr(sl, "ICONS", tmp_path)
+    svg = sl.icon("master", sl.LAYOUTS["master"]([0, 1, 2]), 0).read_text()
+    # A plate under three windows, the master bright and the others grey.
+    assert svg.count("<rect") == 4 and svg.index("#2b2b2b") < svg.index("#f5f5f5")
+    assert svg.count('fill="#f5f5f5"') == 1 and svg.count('fill="#8f8f8f"') == 2
+    # A picture already drawn is not written again.
+    stamp = (tmp_path / "master.svg").stat().st_mtime_ns
+    sl.icon("master", sl.LAYOUTS["master"]([0, 1, 2]), 0)
+    assert (tmp_path / "master.svg").stat().st_mtime_ns == stamp
 
 
 def test_the_side_a_move_comes_in_through():

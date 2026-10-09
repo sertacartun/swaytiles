@@ -1766,42 +1766,19 @@ def boxes(node, x, y, width, height):
             for box in boxes(child, x, y + index * height / count, width, height / count)]
 
 
-def fuzzel_text(path=None, seen=None):
-    """The colour fuzzel writes its text in, so the icons match any theme:
-    fuzzel draws an SVG's currentColor black whatever the theme is."""
-    if path is None:
-        home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-        folders = [home, *(Path(folder) for folder in (os.environ.get("XDG_CONFIG_DIRS") or "/etc/xdg").split(":") if folder)]
-        path = next((folder / "fuzzel/fuzzel.ini" for folder in folders if (folder / "fuzzel/fuzzel.ini").is_file()), None)
-    seen = set() if seen is None else seen
-    colour, section = None, "main"
-    if path is None or path in seen:
-        return colour
-    seen.add(path)
-    try:
-        lines = Path(path).read_text(errors="replace").splitlines()
-    except OSError:
-        return colour
-    for line in lines:
-        line = line.strip()
-        if line.startswith("["):
-            section = line.strip("[] ").lower()
-            continue
-        key, _, value = (part.strip() for part in line.partition("="))
-        if key == "include":
-            colour = fuzzel_text(Path(value).expanduser(), seen) or colour
-        elif section == "colors" and key == "text" and re.fullmatch(r"[0-9a-fA-F]{8}", value):
-            colour = f"#{value[:6]}"
-    return colour
-
-
-def icon(name, tree, highlight, colour):
-    rects = "".join(
-        f'<rect x="{x + 1:.1f}" y="{y + 1:.1f}" width="{width - 2:.1f}" height="{height - 2:.1f}" rx="1" '
-        f'fill="{colour if leaf == highlight else "none"}" stroke="{colour}" stroke-width="1"/>'
-        for leaf, x, y, width, height in boxes(normalize(tree), 0, 0, 48, 30))
+def icon(name, tree, highlight):
+    """The layout as a small screen of its own colours, like an application's
+    icon: a launcher draws the same picture on every line and on the selected
+    one, so it has to read on any theme and any selection."""
+    rects = '<rect x="0.5" y="0.5" width="47" height="29" rx="4" fill="#2b2b2b" stroke="#6b6b6b"/>'
+    rects += "".join(
+        f'<rect x="{x + 0.75:.2f}" y="{y + 0.75:.2f}" width="{width - 1.5:.2f}" height="{height - 1.5:.2f}" rx="1" '
+        f'fill="{"#f5f5f5" if leaf == highlight else "#8f8f8f"}"/>'
+        for leaf, x, y, width, height in boxes(normalize(tree), 3, 3, 42, 24))
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 30">{rects}</svg>'
     path = ICONS / f"{name}.svg"
-    path.write_text(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 30">{rects}</svg>')
+    if not path.is_file() or path.read_text(errors="replace") != svg:
+        path.write_text(svg)
     return path
 
 
@@ -1844,11 +1821,12 @@ def fuzzel_version():
 
 def launcher(custom, count, selected):
     """A known program by its name alone gets the arguments that suit the
-    menu; anything longer is the command as given."""
+    menu; anything longer is the command as given. With the command comes
+    how a line carries its picture, or None for a menu without pictures."""
     import shlex
     words = shlex.split(custom)
     if len(words) != 1 or words[0] not in LAUNCHERS:
-        return words, False
+        return words, None
     if words[0] == "fuzzel":
         # --no-sort came with fuzzel 1.11 and --select-index with 1.12; an
         # older fuzzel stops at either, so it gets the menu without them.
@@ -1858,16 +1836,20 @@ def launcher(custom, count, selected):
             command.append("--no-sort")
         if version is None or version >= (1, 12):
             command += ["--select-index", str(selected)]
-        return command, True
+        return command, "{entry}\0icon\x1f{icon}"
     commands = {
-        "rofi": (["rofi", "-dmenu", "-i", "-no-custom", "-format", "i", "-show-icons", "-p", "layout", "-selected-row", str(selected)], True),
+        # rofi draws its icons as tall as a line of text, too small for a layout.
+        "rofi": (["rofi", "-dmenu", "-i", "-no-custom", "-format", "i", "-show-icons", "-p", "layout", "-selected-row", str(selected),
+                  "-theme-str", "element-icon { size: 1.6em; } element-text { vertical-align: 0.5; }"], "{entry}\0icon\x1f{icon}"),
         # wofi puts the entries picked most often first, keeping the count in a
         # cache file; without one the menu keeps the order of the layouts.
-        "wofi": (["wofi", "--dmenu", "--insensitive", "--prompt", "layout", "--cache-file", "/dev/null"], False),
-        "tofi": (["tofi", "--prompt-text", "layout: "], False),
-        "bemenu": (["bemenu", "-i", "-l", str(count), "-p", "layout"], False),
-        "wmenu": (["wmenu", "-i", "-l", str(count), "-p", "layout"], False),
-        "dmenu": (["dmenu", "-i", "-l", str(count), "-p", "layout"], False),
+        # wofi prints back the line without its picture with parse_action.
+        "wofi": (["wofi", "--dmenu", "--insensitive", "--prompt", "layout", "--cache-file", "/dev/null",
+                  "--allow-images", "--parse-search", "--define", "dmenu-parse_action=true", "--define", "image_size=40"], "img:{icon}:text:{entry}"),
+        "tofi": (["tofi", "--prompt-text", "layout: "], None),
+        "bemenu": (["bemenu", "-i", "-l", str(count), "-p", "layout"], None),
+        "wmenu": (["wmenu", "-i", "-l", str(count), "-p", "layout"], None),
+        "dmenu": (["dmenu", "-i", "-l", str(count), "-p", "layout"], None),
     }
     return commands[words[0]]
 
@@ -1911,9 +1893,7 @@ def menu(sway, custom):
     entries = [f"{name} — {DESCRIPTIONS[name]}{'  ●' if name == chosen else ''}" for name in names]
     if icons:
         ICONS.mkdir(parents=True, exist_ok=True)
-        # fuzzel's own default text colour, and for the others a grey that shows on light and on dark.
-        colour = (fuzzel_text() or "#657b83") if command[0] == "fuzzel" else "#808080"
-        entries = [f"{entry}\0icon\x1f{icon(name, (layout or flat('splith'))(list(range(5))), None if layout is None else 0, colour)}"
+        entries = [icons.format(entry=entry, icon=icon(name, (layout or flat('splith'))(list(range(5))), None if layout is None else 0))
                    for entry, (name, layout) in zip(entries, LAYOUTS.items(), strict=True)]
     with tempfile.TemporaryFile("w+") as listing:
         listing.write("".join(entry + "\n" for entry in entries))

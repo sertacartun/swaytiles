@@ -89,9 +89,10 @@ show` for `swaytiles show`.
   `ExecStart` line of the service.
 - **Menu program.** `swaytiles menu --launcher NAME` opens the menu in
   fuzzel, rofi, wofi, tofi, bemenu, wmenu or dmenu, whichever you name.
-  fuzzel and rofi also show a picture of each layout, in fuzzel drawn
-  in the text colour of your fuzzel theme. Any other
-  dmenu-style program works with its whole command:
+  fuzzel, rofi and wofi also show a picture of each layout, a small
+  screen in colours of its own that reads on any theme and on the
+  selected line. Any other dmenu-style program works with its whole
+  command:
   `swaytiles menu --launcher "walker --dmenu"`.
 - **The service.** It runs `swaytiles --wait`, which waits for sway and
   serves one sway session after another. Errors go to the journal:
