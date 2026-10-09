@@ -262,19 +262,40 @@ def test_the_config_command_prints_the_bindings(session):
     assert s.run("nonsense").returncode == 2
 
 
+def fake_fuzzel(folder, version):
+    record = folder / "record"
+    fake = folder / "fuzzel"
+    fake.write_text(f'#!/bin/sh\nif [ "$1" = --version ]; then echo "fuzzel version: {version} +cairo"; exit; fi\n'
+                    f'echo "$@" > "{record}.args"\n/usr/bin/cat > "{record}.input"\necho {list(swaytiles.LAYOUTS).index("wide")}\n')
+    fake.chmod(0o755)
+    return record
+
+
 def test_the_menu_runs_fuzzel_by_name_and_reads_its_index(session, tmp_path):
     s = opened(session, "master", count=3)
-    record = tmp_path / "record"
-    fake = tmp_path / "fuzzel"
-    fake.write_text(f'#!/bin/sh\necho "$@" > "{record}.args"\n/usr/bin/cat > "{record}.input"\necho {list(swaytiles.LAYOUTS).index("wide")}\n')
-    fake.chmod(0o755)
+    record = fake_fuzzel(tmp_path, "1.12.0")
     result = s.run("menu", "--launcher", "fuzzel", env={"PATH": str(tmp_path)})
     s.settle()
     assert result.returncode == 0, result.stderr
-    assert f"--select-index {list(swaytiles.LAYOUTS).index('master')}" in (tmp_path / "record.args").read_text()
-    assert "\0icon\x1f" in (tmp_path / "record.input").read_text()
+    arguments = record.with_suffix(".args").read_text()
+    assert "--no-sort" in arguments
+    assert f"--select-index {list(swaytiles.LAYOUTS).index('master')}" in arguments
+    assert "\0icon\x1f" in record.with_suffix(".input").read_text()
     assert s.chosen() == "wide"
     assert s.shape() == expected("wide", 3)
+
+
+def test_the_menu_leaves_out_what_an_older_fuzzel_does_not_know(session, tmp_path):
+    s = opened(session, "master", count=3)
+    record = fake_fuzzel(tmp_path, "1.9.2")
+    result = s.run("menu", "--launcher", "fuzzel", env={"PATH": str(tmp_path)})
+    s.settle()
+    assert result.returncode == 0, result.stderr
+    arguments = record.with_suffix(".args").read_text()
+    assert "--no-sort" not in arguments
+    assert "--select-index" not in arguments
+    assert "--index" in arguments
+    assert s.chosen() == "wide"
 
 
 def test_letting_go_says_so(session, tmp_path):

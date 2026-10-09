@@ -98,6 +98,16 @@ def test_the_menu_understands_every_kind_of_launcher():
     assert sl.launcher("", 13, 2) == ([], False)
 
 
+def test_fuzzel_gets_only_the_options_its_version_knows(monkeypatch):
+    for version, no_sort, select_index in (((1, 9, 2), False, False), ((1, 11, 1), True, False),
+                                           ((1, 12, 0), True, True), (None, True, True)):
+        monkeypatch.setattr(sl, "fuzzel_version", lambda version=version: version)
+        command, icons = sl.launcher("fuzzel", 13, 2)
+        assert icons and command[:3] == ["fuzzel", "--dmenu", "--index"]
+        assert ("--no-sort" in command) == no_sort
+        assert (command[-2:] == ["--select-index", "2"]) == select_index
+
+
 def test_the_shipped_config_is_the_generated_one():
     shipped = (Path(__file__).resolve().parent.parent / "contrib" / "sway.conf").read_text()
     assert shipped == sl.CONFIG.format(command="swaytiles")

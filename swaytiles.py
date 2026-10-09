@@ -1831,6 +1831,17 @@ bindsym $mod+m exec {command} swap
 """
 
 
+def fuzzel_version():
+    """fuzzel's version as numbers, or None when it does not say."""
+    import subprocess
+    try:
+        output = subprocess.run(["fuzzel", "--version"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found = re.search(r"(\d+)\.(\d+)\.(\d+)", output)
+    return tuple(int(part) for part in found.groups()) if found else None
+
+
 def launcher(custom, count, selected):
     """A known program by its name alone gets the arguments that suit the
     menu; anything longer is the command as given."""
@@ -1838,9 +1849,17 @@ def launcher(custom, count, selected):
     words = shlex.split(custom)
     if len(words) != 1 or words[0] not in LAUNCHERS:
         return words, False
+    if words[0] == "fuzzel":
+        # --no-sort came with fuzzel 1.11 and --select-index with 1.12; an
+        # older fuzzel stops at either, so it gets the menu without them.
+        version = fuzzel_version()
+        command = ["fuzzel", "--dmenu", "--index", "--width", "45", "--lines", str(count), "--line-height", "40", "--prompt", "layout: "]
+        if version is None or version >= (1, 11):
+            command.append("--no-sort")
+        if version is None or version >= (1, 12):
+            command += ["--select-index", str(selected)]
+        return command, True
     commands = {
-        "fuzzel": (["fuzzel", "--dmenu", "--index", "--no-sort", "--width", "45", "--lines", str(count), "--line-height", "40",
-                    "--prompt", "layout: ", "--select-index", str(selected)], True),
         "rofi": (["rofi", "-dmenu", "-i", "-no-custom", "-format", "i", "-show-icons", "-p", "layout", "-selected-row", str(selected)], True),
         "wofi": (["wofi", "--dmenu", "--insensitive", "--prompt", "layout"], False),
         "tofi": (["tofi", "--prompt-text", "layout: "], False),
