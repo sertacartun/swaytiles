@@ -451,6 +451,27 @@ def evening(workspace, master, axis):
     return f"[con_id={tiled(sides[0])[0]}] resize set {axis} {round((first + 2 * last) / 3)} px"
 
 
+def gap(workspace, axis):
+    """The gap sway leaves between the windows at the top of the workspace."""
+    node = top(workspace)
+    children = node["nodes"]
+    if len(children) < 2 or family(node["layout"]) != ("h" if axis == "width" else "v"):
+        return 0
+    return max(0, (node["rect"][axis] - sum(span(child, axis) for child in children)) // (len(children) - 1))
+
+
+def balancing(workspace, master, side, axis, share):
+    """The commands that give a master in the middle `share` ppt of the
+    workspace and its sides the same room, whatever room they have now.
+    sway spreads each resize over every sibling alike, so setting the master
+    and then one side quarters the difference between the sides each time:
+    after four rounds less than a pixel of it is left."""
+    room = workspace["rect"][axis]
+    rest = (room - 2 * gap(workspace, axis) - room * share // 100) // 2
+    to_share = f"[con_id={master}] resize set {axis} {share} ppt"
+    return [to_share, f"[con_id={side}] resize set {axis} {rest} px"] * 4 + [to_share]
+
+
 def beside(workspace, node, direction, order):
     parent = ancestors(workspace, node["id"])[-2]
     if parent["layout"] == ("tabbed" if direction in ("left", "right") else "stacked"):
@@ -872,6 +893,25 @@ def last_focused(node):
     return node["id"]
 
 
+def successor(workspace, con):
+    """The window sway focuses when the focused `con` closes: the one last
+    focused in the nearest container around it that holds another."""
+    def latest(node):
+        children = node["nodes"] + node.get("floating_nodes", [])
+        for id in node["focus"]:
+            child = next((child for child in children if child["id"] == id), None)
+            if child is None or child["id"] == con:
+                continue
+            found = latest(child) if child["nodes"] else child["id"]
+            if found is not None:
+                return found
+        return None
+    for node in reversed(ancestors(workspace, con)[:-1]):
+        if (found := latest(node)) is not None:
+            return found
+    return None
+
+
 def floater(workspace, node, direction):
     axis, sign = (0 if direction in ("left", "right") else 1), (-1 if direction in ("left", "up") else 1)
 
@@ -1074,15 +1114,20 @@ class Daemon:
             return None
         return "width" if target[0] == "splith" else "height", round(ratio * 100)
 
-    def resize(self, name, target, ids, workspace=None):
-        """The commands that give the master its saved size, its sides made
-        equal first where `workspace` shows them as they are."""
+    def resize(self, name, target, ids, workspace=None, settled=False):
+        """The commands that give the master its saved size. A master in the
+        middle gets sides of the same room: evened out at once where
+        `workspace` is `settled`, as sway has it now, else whatever room the
+        moves before have left them."""
         size = self.sizing(name, target, ids)
         if not size:
             return []
         command = f"[con_id={ids[0]}] resize set {size[0]} {size[1]} ppt"
         if workspace is None:
             return [command]
+        if not settled:
+            middle = len(target[1]) == 3 and target[1][1] == ids[0]
+            return balancing(workspace, ids[0], leaves(target[1][0])[0], *size) if middle else [command]
         if even := evening(workspace, ids[0], size[0]):
             return [even, command]
         node = top(workspace)
@@ -1329,17 +1374,10 @@ class Daemon:
             # In place already, by the tile rule: a new window may still have
             # taken room from the master, and one that closed beside it left
             # its room to the master.
-            sized = self.resize(name, target, ids, workspace) if new in ids or self.regrouped(name, target) else []
+            sized = self.resize(name, target, ids, workspace, settled=True) if new in ids or self.regrouped(name, target) else []
             self.sway.command(*sized)
             return bool(sized)
-        sized = self.resize(name, target, ids)
-        self.sway.command(*(assemble(workspace, target, focused) or []), *sized)
-        if sized and len(target[1]) == 3 and target[1][1] == ids[0]:
-            # Built just now, the sides of a master in the middle are as the
-            # moves left them: they are evened out once sway has them.
-            built = next((ws for ws in workspaces(self.sway.tree()) if ws["name"] == name), None)
-            if built is not None and (even := evening(built, ids[0], self.sizing(name, target, ids)[0])):
-                self.sway.command(even, sized[-1])
+        self.sway.command(*(assemble(workspace, target, focused) or []), *self.resize(name, target, ids, workspace))
         return True
 
     def regrouped(self, name, target):
@@ -1484,7 +1522,7 @@ class Daemon:
             return []
         order = [*ids[:at], con, *ids[at:]]
         target = self.target(name, order)
-        return after(ids[-1], con) + settling(workspace, target, con, ids[-1]) + self.resize(name, target, order)
+        return after(ids[-1], con) + settling(workspace, target, con, ids[-1]) + self.resize(name, target, order, workspace)
 
     def leaving(self, workspace, node):
         """The commands that put the other windows of `workspace` back in its
@@ -1498,7 +1536,7 @@ class Daemon:
         rest, target = copied(workspace), self.target(name, ids)
         take_out(rest, con)
         steps = [] if trimmed(shape(rest)) == target and not wrapped(rest) else assemble(rest, target) or []
-        return steps + self.resize(name, target, ids)
+        return steps + self.resize(name, target, ids, workspace)
 
     def switch(self, mode):
         """`floating toggle`, `enable` or `disable` of the focused window, or
@@ -1523,8 +1561,9 @@ class Daemon:
         """`kill` of the focused window. Where the hole it leaves is not the
         layout without it, sway would draw that hole before the daemon could
         fill it, so the window goes to the scratchpad and the others to their
-        places in the same step, and it is closed from there. A window still
-        there a moment later asks first or will not close, and comes back."""
+        places in the same step, and it is closed from there, the focus going
+        where sway's own close would put it. A window still there a moment
+        later asks first or will not close, and comes back."""
         node, source = focused_window(self.sway.tree())
         if source is None or node["nodes"] or node["type"] != "con" or self.tiling(source["name"]) is None:
             return self.sway.command("kill")
@@ -1538,7 +1577,10 @@ class Daemon:
         regrouped = self.sizing(source["name"], target, ids) and len(top(rest)["nodes"]) < len(top(source)["nodes"])
         if trimmed(shape(rest)) == target and not regrouped:
             return self.sway.command("kill")
-        self.sway.command(f"[con_id={con}] move scratchpad", *self.leaving(source, node), f"[con_id={con}] kill")
+        # The scratchpad focuses another window than sway would on a close.
+        focus = successor(source, con)
+        self.sway.command(f"[con_id={con}] move scratchpad", *self.leaving(source, node),
+                          *([refocus(focus)] if focus is not None else []), f"[con_id={con}] kill")
         threading.Timer(CLOSING, self.sway.tick, [f"{ACT} show {con}"]).start()
         return self.sync()
 

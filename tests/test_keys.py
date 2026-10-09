@@ -180,3 +180,11 @@ def test_a_window_that_will_not_close_comes_back(session):
     assert s.shape() == expected("dwindle", 3)
     assert s.wait(lambda: s.shape() == expected("dwindle", 4, ["w1", "w2", "w3", "stubborn"]), 3), s.shape()
     assert s.focused() == "stubborn"
+
+
+def test_closing_by_key_focuses_the_window_sways_own_close_would(session):
+    s = started(session, "spiral", count=6)
+    for title in ("w5", "w1", "w3"):
+        s.focus(title)
+    s.key("F10")
+    assert s.focused() == "w5"

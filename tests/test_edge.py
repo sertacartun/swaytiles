@@ -421,3 +421,23 @@ def test_a_wide_master_in_the_middle_keeps_equal_sides(session):
     s.open("w4")
     assert s.width("w1") == 0.75
     assert abs(s.width("w4") - s.width("w2")) <= 0.01
+
+
+def test_a_master_in_the_middle_keeps_equal_sides_as_its_columns_are_rebuilt(session):
+    s = session("master", config="gaps inner 5\nbindsym Mod4+F10 kill\n")
+    opened(s, 2)
+    s.command("[title=^w1$] resize set width 60 ppt")
+    s.choose("centered")
+    for index in range(3, 9):
+        s.open(f"w{index}")
+
+    def even():
+        widths = [node["rect"]["width"] for node in s.workspace()["nodes"]]
+        return len(widths) == 3 and abs(widths[0] - widths[2]) <= 2 and s.width("w1") == 0.6
+    assert even()
+    # Each close sends windows across to the other column, by key and by itself.
+    s.focus("w2")
+    s.key("F10")
+    assert even(), s.shape()
+    s.close("w3")
+    assert even(), s.shape()
