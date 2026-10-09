@@ -17,17 +17,15 @@ https://github.com/user-attachments/assets/06af8569-7a35-4198-a915-d71e2e0efaaf
 ```sh
 git clone https://github.com/sertacartun/swaytiles
 cd swaytiles
-mkdir -p ~/.local/bin ~/.local/lib/swaytiles ~/.config/systemd/user
-cp swaytiles.py ~/.local/lib/swaytiles/
-cp contrib/swaytiles ~/.local/bin/
-python3 -m py_compile ~/.local/lib/swaytiles/swaytiles.py
-cp contrib/swaytiles.service ~/.config/systemd/user/
-systemctl --user enable --now swaytiles.service
+./install.sh
 ```
+
+The script copies swaytiles into `~/.local` and starts it as a systemd
+user service. To update, run `git pull` and `./install.sh` again.
 
 swaytiles now runs, and starts with every sway session. Your keys for
 moving windows follow the layout. Add two lines to your sway config,
-with keys you like, and reload sway:
+with keys you like, and reload sway (the script prints them too):
 
 ```
 bindsym $mod+Shift+t exec ~/.local/bin/swaytiles menu --launcher fuzzel
@@ -41,9 +39,7 @@ focused window with the master.
 ## Uninstall
 
 ```sh
-systemctl --user disable --now swaytiles.service
-rm ~/.config/systemd/user/swaytiles.service ~/.local/bin/swaytiles
-rm -r ~/.local/lib/swaytiles
+./install.sh --uninstall
 ```
 
 Then remove the two lines from your sway config.
