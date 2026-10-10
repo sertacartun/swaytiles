@@ -18,6 +18,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import swaytiles
+
 ROOT = Path(__file__).resolve().parent.parent
 DAEMON = ROOT / "swaytiles.py"
 CLIENT = Path(__file__).resolve().parent / "client.py"
@@ -50,7 +52,6 @@ def tidy(node):
 
 
 def expected(layout, count, names=None):
-    import swaytiles
     names = names or [f"w{index + 1}" for index in range(count)]
     tree = swaytiles.LAYOUTS[layout](list(range(count)))
 
@@ -73,12 +74,14 @@ class Session:
         self.state_file.write_text(json.dumps({"layout": layout, "workspaces": workspaces or {}}))
         self.errors = Path(base) / "daemon.err"
         self.sent = Path(base) / "daemon.sent"
+        self.ready = Path(base) / "daemon.ready"
         self.config = Path(base) / "sway.conf"
         self.config.write_text("default_border normal\nfocus_follows_mouse no\n" + config)
         self.outputs = outputs
         self.releasing = False
         self.layout, self.picked = layout, dict(workspaces or {})
         self.clients = []
+        self.ipc = None
         self.daemon = None
         self.sway = None
         self.env = None
@@ -109,6 +112,9 @@ class Session:
             time.sleep(0.05)
         else:
             raise RuntimeError("headless sway did not start")
+        # Queries go over the socket: a swaymsg process for each costs ten
+        # times as much, under a parallel run more.
+        self.ipc = swaytiles.Sway(socket, timeout=10)
         self.env = {**environment, "SWAYSOCK": socket, "I3SOCK": socket, "WAYLAND_DISPLAY": "wayland-1",
                     "XDG_STATE_HOME": str(self.state), "XDG_CACHE_HOME": str(self.cache),
                     "GSK_RENDERER": "cairo", "GDK_BACKEND": "wayland", "GTK_A11Y": "none", "NO_AT_BRIDGE": "1"}
@@ -116,14 +122,15 @@ class Session:
         return self
 
     def start_daemon(self):
+        self.ready.unlink(missing_ok=True)
         with open(self.errors, "a") as errors:
-            self.daemon = subprocess.Popen([sys.executable, str(COUNTED)], env={**self.env, "SWAYTILES_SENT": str(self.sent)},
-                                           stdout=subprocess.DEVNULL,
-                                           stderr=errors, start_new_session=True)
-        # Under a parallel run the start can be slow: wait for the lock, or
-        # for a daemon that gave up.
-        self.wait(lambda: self.locked() or self.daemon.poll() is not None, 15)
-        time.sleep(0.2)
+            self.daemon = subprocess.Popen([sys.executable, str(COUNTED)],
+                                           env={**self.env, "SWAYTILES_SENT": str(self.sent), "SWAYTILES_READY": str(self.ready)},
+                                           stdout=subprocess.DEVNULL, stderr=errors, start_new_session=True)
+        # Under a parallel run the start can be slow: wait for its first
+        # arrangement, which sets the rules for new windows, or for a daemon
+        # that gave up.
+        self.wait(lambda: self.ready.exists() or self.daemon.poll() is not None, 15)
         self.settle()
 
     def locked(self):
@@ -178,13 +185,13 @@ class Session:
         return subprocess.run(["swaymsg", "-s", self.env["SWAYSOCK"], *arguments], capture_output=True, text=True).stdout
 
     def command(self, text, settle=True):
-        result = json.loads(self.msg("-r", text) or "[]")
+        result = self.ipc.request(swaytiles.Sway.COMMAND, text)
         if settle:
             self.settle()
         return result
 
     def tree(self):
-        return json.loads(self.msg("-r", "-t", "get_tree"))
+        return self.ipc.tree()
 
     def workspace(self, name="1"):
         return next((ws for output in self.tree()["nodes"] for ws in output["nodes"] if ws["name"] == name), None)
@@ -226,6 +233,10 @@ class Session:
         chosen = json.loads(self.state_file.read_text())["workspaces"]
         return {name for name, layout in chosen.items() if layout == "default" and self.picked.get(name, self.layout) != "default"}
 
+    def columns(self, name="1"):
+        """The widths of the containers right under the workspace."""
+        return [node["rect"]["width"] for node in self.workspace(name)["nodes"]]
+
     def width(self, title, of="1"):
         node, ws = self.node(title), self.workspace(of)
         return round(node["rect"]["width"] / ws["rect"]["width"], 2)
@@ -242,7 +253,7 @@ class Session:
         deadline = time.monotonic() + timeout
         last, since = None, time.monotonic()
         while time.monotonic() < deadline:
-            current = self.msg("-t", "get_tree", "-r")
+            current = self.ipc.tree()
             if current != last:
                 last, since = current, time.monotonic()
             elif time.monotonic() - since >= quiet:
@@ -259,7 +270,7 @@ class Session:
             self.settle()
 
     def close(self, title, settle=True):
-        self.msg(f"[title=^{title}$] kill")
+        self.command(f"[title=^{title}$] kill", settle=False)
         self.wait(lambda: self.node(title) is None, 5)
         if settle:
             self.settle()
@@ -297,11 +308,20 @@ class Session:
         subprocess.run(["wtype", "-M", "logo", "-k", name, "-m", "logo"], env=self.env, check=True)
         self.settle()
 
-    def choose(self, layout):
-        focused = next(ws["name"] for ws in json.loads(self.msg("-r", "-t", "get_workspaces")) if ws["focused"])
-        self.picked[focused] = layout
-        subprocess.run([sys.executable, str(DAEMON), layout], env=self.env, check=True)
+    def choose(self, layout, cli=False):
+        """Pick a layout as the menu does, or with `cli` as `swaytiles LAYOUT` does."""
+        self.picked[self.ipc.focused_workspace()] = layout
+        if cli:
+            subprocess.run([sys.executable, str(DAEMON), layout], env=self.env, check=True)
+        else:
+            self.ipc.tick(f"layout {layout}")
         self.settle()
+
+    def fill(self, count, prefix="w"):
+        """Open windows `prefix`1 to `prefix`count, one after another."""
+        for index in range(1, count + 1):
+            self.open(f"{prefix}{index}")
+        return self
 
     def run(self, *arguments, env=None):
         return subprocess.run([sys.executable, str(DAEMON), *arguments], env={**self.env, **(env or {})},

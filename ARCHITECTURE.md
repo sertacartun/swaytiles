@@ -18,9 +18,11 @@ sway ──events──▶ Daemon.handle ──▶ arrange ──▶ one IPC com
   sway, waits for a socket that answers, and after sway ends waits for
   the next one, so nothing in the sway config has to start it.
 - **The command line** (`swaytiles menu`, `swaytiles LAYOUT`, `swaytiles
-  default LAYOUT`, `swaytiles swap`, `swaytiles move`) never touches windows. It sends sway a tick with the payload `layout NAME`,
-  sway passes it to every subscriber, and the daemon applies it. The
-  daemon stays the only process that changes the tree.
+  default LAYOUT`, `swaytiles swap`, `swaytiles move`, `swaytiles show`)
+  never touches windows. It sends sway a tick, `layout NAME` for a layout
+  and `layout:act …` for the rest; sway passes it to every subscriber,
+  and the daemon applies it. The daemon stays the only process that
+  changes the tree.
 - **`Sway`** is a small client for sway's IPC protocol over the UNIX
   socket, with no dependencies. Reading the tree this way takes about
   0.2 ms, against 2.6 ms for a `swaymsg` process.
@@ -35,7 +37,8 @@ sway ──events──▶ Daemon.handle ──▶ arrange ──▶ one IPC com
   and for those that are exactly sway's own `move DIRECTION` or `move
   container to workspace X` sends `bindsym KEYS nop layout move …` with
   the flags the config gave; `move scratchpad` becomes `nop layout hide`
-  and `floating toggle|enable|disable` becomes `nop layout float …`. A runtime `bindsym` replaces the config's
+  , `floating toggle|enable|disable` becomes `nop layout float …` and
+  `kill` becomes `nop layout close`. A runtime `bindsym` replaces the config's
   binding and lasts until sway reloads, so `adopt` runs again on the
   reload event, and `give_back` binds the original commands when the
   daemon stops. A move key the reader missed is taken over the first
@@ -122,11 +125,14 @@ brings every workspace in line:
    workspaces that are no longer float workspaces.
 4. Update the order: drop closed windows, append new ones.
 5. `inspect` the workspaces for changes made by hand (see below).
-6. `anchors`: point the placement rules at the last window of each
-   workspace (see below).
-7. For each workspace: `float_all` on float workspaces, `shape_up` on
-   tiled ones. Workspaces with a fullscreen window are skipped.
-8. `record` the tree now on screen as `built`, save the runtime file, and
+6. For each workspace: `float_all` on float workspaces; on tiled ones,
+   read the master's size where the tree tells it (`measure`,
+   `measure_gone`), then `shape_up`. Workspaces with a fullscreen window
+   are skipped.
+7. Focus the window that takes the place of a focused one that closed.
+8. `anchors`: point the placement rules at the place of the next window
+   of each workspace (see below).
+9. `record` the tree now on screen as `built`, save the runtime file, and
    `sync` if anything was moved.
 
 ## New windows appear in place
@@ -191,33 +197,72 @@ removes the marks and makes hidden windows visible again.
 ## Shaping a workspace
 
 `shape_up` compares the target tree with the one on screen. When they
-differ, `assemble` builds the target right under the workspace. It
-gathers the windows with `move to mark`, which empties the containers
-they were in, and sway removes them. A `layout` command on a window right
-under the workspace would wrap all the windows in a new container, so the
-workspace's own layout is turned with a `move` across it instead: sway
-puts the window first and gives the workspace the move's orientation
-(`workspace_rejigger`). A tabbed or stacked layout is one container under
-the workspace. A workspace whose windows sit in a container of their own,
-left by an older version or by hand, is rebuilt the same way. Building
-always from scratch is one path for every case; the sizes of the stack's
-windows go back to even, and the master keeps its saved share.
+differ, it keeps sway's containers: they are the layout's places, and
+sway keeps the size of each, the sizes the user gave them. A container
+that is moved or made anew starts over at an even share, so the daemon
+moves only windows, never the containers around them.
 
-The whole build is sent as one IPC message, so sway applies it as one
-transaction and draws no half-built state. `resize`, which gives the
-master its saved share of the workspace in `ppt`, goes in the same
-message.
+`reconcile` works out, on the model of the workspace, the fewest steps
+that turn what is there into the target while every container stays:
 
-**Master size.** `measure` reads the master's share after every binding
-and every arrangement that matches the target, and `farewell` reads it
-from the close event of the master, so the next master takes the same
-size. A window sway has just put next to the master took its room from
-all of them alike, so `measure` reads the share from the room the others
-have, and a lone master keeps the share it had. sway reports nothing
-for a resize by the mouse or by `swaymsg`, so while the daemon watches
-the tree after a focus change (see below) it reads the share too
-(`remeasure`), and points the tile rule at a share that changed, so the
-next window does not bring back the old one.
+- a container left holding a single container gives way to it
+  (`split none`, which hands the container's size to its child; sway
+  goes on up the tree while a container holds one child, so one that
+  goes with it is made again around the child with `split`);
+- a container turns to the target's layout (`layout` on a child, or
+  `split h|v` on an only child, which turns its container);
+- siblings change places with `swap container`, which leaves each size
+  with its place;
+- a column or row of windows hands its last windows to a sibling that has
+  too few, and one left over gives all of its away, so sway removes it;
+- a window alone in a container gives the container up where a window
+  goes, and a window takes a container of its own where one goes;
+- the windows are swapped into their places.
+
+Where that cannot reach the target, as for the workspace's own layout,
+`assemble` builds it from scratch right under the workspace, as every
+change was built before: it gathers the windows with `move to mark`,
+which empties the containers they were in, turns the workspace's layout
+with a `move` across it (a `layout` command on a window right under the
+workspace would wrap all of them in a new container) and nests the
+rest. A tabbed or stacked layout is one container under the workspace.
+Picking another layout from the menu builds it this way too.
+
+Each change is sent as one IPC message, so sway applies it as one
+transaction and draws no half-built state. `resize` goes in the same
+message, but only where the master's own place changed: where a window
+beside it came or went, or the master was built anew.
+
+**Master size.** The master keeps its share of the workspace as windows
+come and go and across layouts, which plain sway does not. `measure`
+reads the share after every binding and every arrangement that matches
+the target, `farewell` reads it from the close event of the master, so
+the next master takes the same size, and `measure_gone` reads it back
+from the room sway gave the master when a window beside it closed; the
+gap sway leaves between windows, which no single window shows, is kept
+from the last reading that had two. A
+window sway has just put next to the master took its room from all of
+them alike, so `measure` reads the share from the room the others have,
+and a lone master keeps the share it had. sway reports nothing for a
+resize by the mouse or by `swaymsg`, so while the daemon watches the
+tree after a focus change (see below) it reads the share too
+(`remeasure`), and points the tile rule at a share that changed. A
+share read in passing must differ by two percent to replace the saved
+one, as a drag may still be going on; one read just before the daemon
+acts, on `nop layout close` or a close event, is taken as it is. A share
+that is an even split for the windows there now is still kept, as the
+same share is not even for another count (`keep`).
+
+For a master in the middle, as in `centered`, `measure` also keeps how
+the two sides share the rest (`leans`), as a mouse dragging one edge of the master
+leaves them. The sides only need it when a side comes back: when the
+third window comes in, the tile rule first sizes it so that the master's
+own resize leaves the sides at that share (`entry`), and where the
+columns are built anew, `balancing` sets both sides and the master in
+turn, five rounds in one message. sway spreads a resize over every
+sibling alike and refuses one that would leave a sibling under 100
+pixels, so the master's resize alone keeps the sides as unequal as they
+were.
 
 ## The model of sway
 
@@ -227,13 +272,14 @@ that moves away, the window that comes in. So the daemon works them
 out on a copy of the workspace's tree in sway's own form, with the few
 commands it uses: put a window after another (`move to mark`), take one
 out (a container left empty goes, one left with a single child stays),
-nest one (`split h, layout`), and `move <direction>` as
+nest one (`split h, layout`), swap two (`swap`), and `move <direction>` as
 `container_move_in_direction` does it: pass a window beside it, leave its
 container at the edge, turn the workspace around the others
 (`workspace_rejigger`), cross to the next output, then flatten a split
 left holding only a split across it. `foresee` tries its plans on it,
-`leaving` and `settling` build from it, and `presses` counts with it how
-many of sway's own moves take a window to the next output.
+`reconcile`, `leaving`, `arrival` and `entering` work from it, and
+`presses` counts with it how many of sway's own moves take a window to
+the next output.
 
 ## Changes made by hand
 
@@ -307,19 +353,29 @@ Every window the daemon moves itself goes in one command with all it
 takes to put both workspaces in order, so sway never draws a hole or a
 window in a passing place:
 
-- `leaving` puts the windows it leaves behind in order, worked out on
-  the model of the workspace without it.
-- `entering` takes it to its place in one step: `move to mark` after the
-  last window of the workspace it goes to and the steps of `assemble`,
-  worked out on the model of that workspace with it. Without this, sway
-  would first tile it next to the focused window there.
+- `leaving`: where sway's own going leaves the layout as it was, nothing.
+  Else the window is first swapped down, place by place, to the place
+  the layout gives up, the last one, and what sway leaves when it goes is
+  put in order with `reconcile`. The others move up a place and every
+  place keeps its size, as when the window in the last place goes in
+  plain sway.
+- `entering` takes it to its place in one step (`arrival`): it comes in
+  at the end as the tile rule puts a new window, worked out by `foresee`,
+  and is swapped back to its place, so the windows after it move down a
+  place and keep the sizes of the places. Without this, sway would first
+  tile it next to the focused window there.
 
 The moves that use them: to another workspace or output, `nop layout
 hide` (`move scratchpad`), `nop layout float` (`floating toggle`) both
-ways, and `nop layout show` (`swaytiles show`), which brings a window
-back from the scratchpad with `scratchpad show` and `floating disable`
-first. A window closed or moved by sway itself still shows one frame
-with the hole.
+ways, `nop layout show` (`swaytiles show`), which brings a window back
+from the scratchpad with `scratchpad show` and `floating disable` first,
+and `nop layout close` (the config's `kill` key), which hides the window
+on its way out of the layout and kills it there; a window that is still
+there a second later asked first or will not close, and comes back. The
+focus goes to the window that takes the closed one's place, the one the
+layout without it puts most over where it was (`taker`), which is under
+the mouse that focused it. A window closed or moved by sway itself still
+shows one frame with the hole.
 
 `nop layout master` is the same swap, with the master. On workspaces
 without a layout, a move is sway's own, except that `presses` predicts
@@ -374,6 +430,15 @@ These were measured on sway 1.12 or read in its source:
 - The workspace node always reports `fullscreen_mode` 1, so fullscreen is
   read from its children.
 - `get_config` returns the main config file only, without includes.
+- A container keeps its share of its parent; one that is moved or made
+  starts at zero, and the next arrangement gives it the average of its
+  siblings. `swap container` hands the shares over with the places, and
+  `split none` hands a container's share to its only child.
+- `layout` turns the container of the window it is run on; on an only
+  child it turns the one around that, while `split h|v` on an only child
+  turns its container.
+- `resize set` spreads the change over every sibling alike, and does
+  nothing, without an error, when a sibling would fall under 100 pixels.
 - `focus <direction>` from a floating window only looks at other floating
   windows on the same workspace.
 - Each step of the tile rule whose mark is not there makes sway log
@@ -389,7 +454,10 @@ every test, `conftest.py` checks that the daemon logged no error and
 let no workspace go (switched it to `default`) unless the test expected it.
 The daemon is started through `tests/daemon.py`, which imports it as the
 installed launcher does and writes every command message it sends to a
-file, so `drawn` can count the transactions an action costs. Each test
+file, so `drawn` can count the transactions an action costs, and marks
+its first arrangement, after which the rules for new windows are set.
+The harness asks sway over the socket with `Sway`, not through `swaymsg`
+processes. Each test
 runs its own sway in its own runtime directory, so they run side by side
 (`-n auto --maxprocesses 8` in `pyproject.toml`; `-n 0` runs them one at
 a time).
@@ -398,6 +466,7 @@ a time).
 | --- | --- |
 | `test_pure.py` | the layout arithmetic and the model of sway, without sway |
 | `test_layouts.py` | every layout while windows open, close and switch |
+| `test_slots.py` | sizes against a plain sway that does the same with the daemon stopped |
 | `test_manual.py` | changes made by hand, letting a workspace go, the menu and the config command |
 | `test_drag.py` | mouse drags, through a virtual pointer (`tests/pointer.py`) |
 | `test_promote.py` | swapping with the master |
@@ -409,12 +478,17 @@ a time).
 | `test_smoke.py` | a quick check that the daemon starts and places a window |
 | `test_edge.py`, `test_compat.py` | situations that broke other layout daemons |
 | `test_safety.py` | one daemon per session, broken state, crashes |
+| `test_install.py` | `install.sh` in a scratch home, with a stand-in for `systemctl` |
 
 ## Known limits
 
-- When a window closes, or leaves its workspace by a command the daemon
-  did not send, sway lays out the remaining windows once before the
-  daemon does, so one extra frame may show.
+- When a window closes by itself, or leaves its workspace by a command
+  the daemon did not send, sway lays out the remaining windows once
+  before the daemon does, so one extra frame may show. Where the layout
+  then needs more than `reconcile` does (the first window of `dwindle`
+  or `spiral`, the master of `centered`, a side of `centered` left
+  empty, `grid` going from three windows to two), it is built anew and
+  the sizes there start over, but for the master's.
 - sway reports no event for a window dropped on a workspace's edge or
   swapped with the mouse, nor for `layout` or `split` sent with `swaymsg`.
   Pressing on a window to drag it focuses it, so the daemon looks at the

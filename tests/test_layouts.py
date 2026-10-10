@@ -44,13 +44,24 @@ def tour(names):
     return path[::-1]
 
 
-def test_switching_between_every_pair_of_layouts(session):
-    s = session("master")
-    for index in range(1, 5):
-        s.open(f"w{index}")
-    names = [*TILING, "float", "default"]
-    route = tour(names)
-    assert len(route) == len(names) * (len(names) - 1) + 1
+NAMES = [*TILING, "float", "default"]
+ROUTE = tour(NAMES)
+# The route in parts that run side by side, each starting where the one
+# before ends.
+PARTS = 4
+
+
+def test_the_route_goes_between_every_pair_of_layouts():
+    assert len(ROUTE) == len(NAMES) * (len(NAMES) - 1) + 1
+    assert len(set(itertools.pairwise(ROUTE))) == len(ROUTE) - 1
+
+
+@pytest.mark.parametrize("part", range(PARTS))
+def test_switching_between_every_pair_of_layouts(session, part):
+    size = -(-(len(ROUTE) - 1) // PARTS)
+    route = ROUTE[part * size:(part + 1) * size + 1]
+    s = session("master").fill(4)
+    s.choose(route[0])
     for previous, layout in itertools.pairwise(route):
         s.choose(layout)
         if layout == "float":
@@ -67,7 +78,7 @@ def test_the_menu_choice_is_remembered_per_workspace(session):
     s = session("master")
     s.open("w1")
     s.open("w2")
-    s.choose("tabbed")
+    s.choose("tabbed", cli=True)
     s.command("workspace 2")
     s.open("x1")
     s.open("x2")
@@ -97,3 +108,22 @@ def test_a_new_window_is_drawn_in_its_place_from_the_first_frame(session, layout
         # A grid deals its rows out again from 4 windows to 5: the daemon rebuilds it.
         assert frame() == first or (layout, count) == ("grid", 5), f"w{count}: {drawn}"
         assert s.shape() == expected(layout, count)
+
+
+@pytest.mark.parametrize("layout", TILING)
+def test_a_window_opening_on_a_workspace_emptied_is_drawn_on_its_own(session, layout):
+    # The rule was set for a second window next to the first; with the first
+    # gone it must not wrap the new one in a container, with a tab bar in a
+    # stack of tabs.
+    s = session(layout)
+    s.open("w1")
+    s.close("w1")
+    os.kill(s.daemon.pid, signal.SIGSTOP)
+    try:
+        s.open("w2", settle=False)
+        s.wait(lambda: False, 0.2)
+        first = s.shape(exact=True)
+    finally:
+        os.kill(s.daemon.pid, signal.SIGCONT)
+    # Right under the workspace; which way the workspace splits shows nothing.
+    assert first in ("H[w2]", "V[w2]")

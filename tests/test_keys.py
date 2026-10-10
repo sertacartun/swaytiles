@@ -3,6 +3,7 @@
 import subprocess
 import sys
 
+import pytest
 from harness import DAEMON
 
 import swaytiles
@@ -14,10 +15,7 @@ NATIVE = ("set $mod Mod4\nset $left F1\n"
 
 
 def started(session, layout="master", count=4, config=NATIVE, **options):
-    s = session(layout, config=config, **options)
-    for index in range(1, count + 1):
-        s.open(f"w{index}")
-    return s
+    return session(layout, config=config, **options).fill(count)
 
 
 def test_reading_bindings_follows_variables_blocks_and_includes(tmp_path):
@@ -192,3 +190,23 @@ def test_closing_focuses_the_window_that_takes_its_place(session):
     assert s.focused() == "w4"
     s.close("w4")
     assert s.focused() == "w5"
+
+
+def test_closing_in_centered_focuses_the_window_that_fills_the_room(session):
+    # The next window in the order is in the other column: the one above
+    # grows into the room.
+    s = started(session, "centered")
+    assert s.shape() == "H[w3 w1 V[w2 w4]]"
+    s.focus("w4")
+    s.key("F10")
+    assert s.focused() == "w2"
+
+
+@pytest.mark.parametrize("key", ["F10", "F9"])
+def test_a_window_leaving_from_the_side_leaves_a_window_focused(session, key):
+    # Swapped down to the place that goes, the window leaves its container
+    # empty, and sway would leave the focus on that container.
+    s = started(session, "centered", count=3)
+    s.focus("w2")
+    s.key(key)
+    assert s.focused() == "w3"
