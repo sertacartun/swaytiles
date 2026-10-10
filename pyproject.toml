@@ -34,7 +34,6 @@ testpaths = ["tests"]
 pythonpath = ["."]
 # Each test runs its own headless sway, so they run side by side.
 addopts = "-n auto --maxprocesses 8"
-markers = ["sway: needs a headless sway and a GTK 4 test client"]
 
 [tool.ruff]
 line-length = 160

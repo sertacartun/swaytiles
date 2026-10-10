@@ -6,10 +6,7 @@ from harness import expected
 
 
 def opened(session, layout, count=4):
-    s = session(layout)
-    for index in range(1, count + 1):
-        s.open(f"w{index}")
-    return s
+    return session(layout).fill(count)
 
 
 def middle(s, title):

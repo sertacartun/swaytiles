@@ -21,9 +21,7 @@ SIZED = {
 
 
 def built(session, layout, count, sizes):
-    s = session(layout, config=CONFIG)
-    for index in range(1, count + 1):
-        s.open(f"w{index}")
+    s = session(layout, config=CONFIG).fill(count)
     for command in sizes:
         s.command(command)
     # Read by the daemon as a mouse would leave them, after a focus change.
@@ -93,9 +91,9 @@ def test_a_window_closing_by_itself_leaves_the_places_before_it_alone(session, l
 def test_a_window_closing_by_itself_in_centered_keeps_the_columns(session):
     count, sizes, _ = SIZED["centered"]
     s = built(session, "centered", count, sizes)
-    widths = [node["rect"]["width"] for node in s.workspace()["nodes"]]
+    widths = s.columns()
     s.close("w2")
-    assert [node["rect"]["width"] for node in s.workspace()["nodes"]] == widths
+    assert s.columns() == widths
 
 
 @pytest.mark.parametrize(("layout", "kept"), [
@@ -127,20 +125,18 @@ def test_a_window_moved_in_takes_room_only_beside_it(session):
 def test_a_window_hidden_and_shown_again_leaves_the_columns_as_they_were(session):
     count, sizes, _ = SIZED["centered"]
     s = built(session, "centered", count, sizes)
-    widths = [node["rect"]["width"] for node in s.workspace()["nodes"]]
+    widths = s.columns()
     s.focus("w2")
     s.key("F9")
     s.run("show")
     s.settle()
-    assert [node["rect"]["width"] for node in s.workspace()["nodes"]] == widths
+    assert s.columns() == widths
 
 
 def test_a_window_closing_by_itself_in_the_middle_of_dwindle_leaves_the_layout_whole(session):
     # sway's `split none` takes away every container left with one child up
     # the tree, not only the one it is run in.
-    s = session("dwindle", config=CONFIG)
-    for index in range(1, 5):
-        s.open(f"w{index}")
+    s = session("dwindle", config=CONFIG).fill(4)
     s.close("w3")
     assert s.shape(exact=True) == "H[w1 V[w2 H[w4]]]"
 

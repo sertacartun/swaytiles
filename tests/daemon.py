@@ -21,4 +21,16 @@ def command(self, *commands):
 
 
 swaytiles.Sway.command = command
+READY = Path(os.environ.get("SWAYTILES_READY", os.devnull))
+arrange = swaytiles.Daemon.arrange
+
+
+def arranged(self, *arguments, **options):
+    # The first arrangement has set the rules for new windows: the daemon is ready.
+    arrange(self, *arguments, **options)
+    if not READY.exists():
+        READY.touch()
+
+
+swaytiles.Daemon.arrange = arranged
 sys.exit(swaytiles.cli())

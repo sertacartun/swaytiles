@@ -22,16 +22,14 @@ def test_the_waiting_daemon_follows_sway_across_sessions(tmp_path):
     try:
         assert not s.wait(lambda: not s.alive, 2.5)
         s.start()
-        for index in range(1, 4):
-            s.open(f"w{index}")
+        s.fill(3)
         assert s.shape() == expected("master", 3)
         s.msg("exit")
         s.sway.wait(10)
         assert s.wait(lambda: not s.locked(), 5)
         assert s.alive
         s.start()
-        for index in range(1, 4):
-            s.open(f"v{index}")
+        s.fill(3, "v")
         assert s.shape() == expected("master", 3, ["v1", "v2", "v3"])
         assert s.alive
         assert not s.stderr().strip()

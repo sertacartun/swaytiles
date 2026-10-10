@@ -2,6 +2,7 @@
 
 import signal
 
+import pytest
 from harness import expected
 
 import swaytiles
@@ -12,10 +13,7 @@ MOVES = ("bindsym Mod4+F1 nop layout move left\nbindsym Mod4+F2 nop layout move 
 
 
 def opened(session, layout, count=4, **options):
-    s = session(layout, config=MOVES, **options)
-    for index in range(1, count + 1):
-        s.open(f"w{index}")
-    return s
+    return session(layout, config=MOVES, **options).fill(count)
 
 
 def test_layout_moves_swap_with_the_neighbour(session):
@@ -52,18 +50,18 @@ def test_layout_moves_reorder_tabs_before_leaving_them(session):
     assert s.shape() == "H[w2 T[w1 w4 w3 w5]]"
 
 
-def test_layout_moves_in_every_layout_keep_it(session):
+@pytest.mark.parametrize("layout", ["master-right", "wide", "centered", "dwindle", "spiral", "grid", "stacked-master"])
+def test_layout_moves_in_every_layout_keep_it(session, layout):
     s = opened(session, "master", count=5)
-    for layout in ("master-right", "wide", "centered", "dwindle", "spiral", "grid", "stacked-master"):
-        s.choose(layout)
-        for title in ("w5", "w1"):
-            for key in ("F1", "F2", "F3", "F4"):
-                s.focus(title)
-                s.key(key)
-                assert s.chosen() == layout, (layout, title, key)
-        moved = s.shape()
-        s.choose(layout)
-        assert s.shape() == moved, layout
+    s.choose(layout)
+    for title in ("w5", "w1"):
+        for key in ("F1", "F2", "F3", "F4"):
+            s.focus(title)
+            s.key(key)
+            assert s.chosen() == layout, (title, key)
+    moved = s.shape()
+    s.choose(layout)
+    assert s.shape() == moved
 
 
 def test_a_native_move_that_breaks_the_layout_lets_it_go(session):

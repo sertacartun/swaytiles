@@ -12,8 +12,7 @@ def x11(s, title):
 def test_assign_sends_windows_to_a_hidden_workspace(session):
     s = session("master", config="assign [title=^as] workspace 3\n")
     s.open("w1")
-    for index in range(1, 4):
-        s.open(f"as{index}")
+    s.fill(3, "as")
     assert s.shape("3") == "H[as1 V[as2 as3]]"
     assert s.shape() == "w1"
     s.open("w2")

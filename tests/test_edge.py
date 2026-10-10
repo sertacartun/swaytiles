@@ -12,14 +12,9 @@ CONFIG = ("for_window [title=^dlg] floating enable\n"
           "bindsym Mod4+F5 nop layout move number 2\n")
 
 
-def opened(s, count, prefix="w"):
-    for index in range(1, count + 1):
-        s.open(f"{prefix}{index}")
-
-
 def test_a_fullscreen_stack_window_survives_a_new_window(session):
     s = session("master")
-    opened(s, 3)
+    s.fill(3)
     s.command("[title=^w2$] fullscreen enable")
     s.open("w4")
     assert s.shape() == "H[w1 V[w2* w3 w4]]"
@@ -31,7 +26,7 @@ def test_a_fullscreen_stack_window_survives_a_new_window(session):
 @pytest.mark.parametrize("layout", ["centered", "dwindle", "spiral", "grid", "master"])
 def test_fullscreen_is_never_dropped_by_a_rearrangement(session, layout):
     s = session(layout)
-    opened(s, 2)
+    s.fill(2)
     s.command("[title=^w1$] fullscreen enable")
     s.open("w3")
     assert s.fullscreen("w1")
@@ -44,7 +39,7 @@ def test_fullscreen_is_never_dropped_by_a_rearrangement(session, layout):
 
 def test_fullscreen_survives_a_menu_switch(session):
     s = session("master")
-    opened(s, 3)
+    s.fill(3)
     s.command("[title=^w1$] fullscreen enable")
     s.choose("centered")
     assert s.fullscreen("w1")
@@ -54,7 +49,7 @@ def test_fullscreen_survives_a_menu_switch(session):
 
 def test_the_master_width_set_by_hand_is_kept(session):
     s = session("master")
-    opened(s, 3)
+    s.fill(3)
     s.command("[title=^w1$] resize set width 70 ppt")
     s.open("w4")
     assert s.width("w1") == 0.7
@@ -71,7 +66,7 @@ def test_the_master_width_set_by_hand_is_kept(session):
 
 def test_equal_widths_stay_equal_across_layouts(session):
     s = session("master")
-    opened(s, 3)
+    s.fill(3)
     s.choose("centered")
     assert s.width("w1") == 0.33
     s.choose("master")
@@ -80,7 +75,7 @@ def test_equal_widths_stay_equal_across_layouts(session):
 
 def test_a_window_floated_for_a_moment_goes_back_to_its_place(session):
     s = session("master")
-    opened(s, 4)
+    s.fill(4)
     s.command("[title=^w1$] floating enable")
     assert s.shape() == "H[w2 V[w3 w4]] F[w1]"
     s.command("[title=^w1$] floating disable")
@@ -92,7 +87,7 @@ def test_a_window_floated_for_a_moment_goes_back_to_its_place(session):
 
 def test_dialogs_float_and_join_the_stack_when_tiled(session):
     s = session("master", config=CONFIG)
-    opened(s, 3)
+    s.fill(3)
     s.open("dlg")
     assert s.shape() == "H[w1 V[w2 w3]] F[dlg]"
     s.open("w4")
@@ -106,7 +101,7 @@ def test_dialogs_float_and_join_the_stack_when_tiled(session):
 
 def test_the_scratchpad_takes_and_gives_back_windows(session):
     s = session("master")
-    opened(s, 4)
+    s.fill(4)
     s.command("[title=^w1$] move scratchpad")
     assert s.shape() == "H[w2 V[w3 w4]]"
     s.open("w5")
@@ -119,7 +114,7 @@ def test_the_scratchpad_takes_and_gives_back_windows(session):
 
 def test_the_last_window_sent_to_the_scratchpad_does_not_pull_new_ones_in(session):
     s = session("master")
-    opened(s, 3)
+    s.fill(3)
     s.command("[title=^w3$] move scratchpad")
     s.open("w4")
     assert s.shape() == "H[w1 V[w2 w4]]"
@@ -149,7 +144,7 @@ def shapes_during(s, action):
 ])
 def test_a_hidden_window_comes_back_in_one_step(session, layout, before, after):
     s = session(layout)
-    opened(s, 4)
+    s.fill(4)
     s.command("[title=^w2$] move scratchpad")
     s.open("w5")
     s.close("w3")
@@ -162,7 +157,7 @@ def test_a_hidden_window_comes_back_in_one_step(session, layout, before, after):
 
 def test_show_brings_back_the_last_hidden_window(session):
     s = session("master", config="bindsym Mod4+F6 nop layout show\n")
-    opened(s, 4)
+    s.fill(4)
     s.command("[title=^w2$] move scratchpad")
     s.command("[title=^w4$] move scratchpad")
     s.key("F6")
@@ -175,7 +170,7 @@ def test_show_brings_back_the_last_hidden_window(session):
 
 def test_a_hidden_window_comes_back_to_a_float_slot(session):
     s = session("float")
-    opened(s, 3)
+    s.fill(3)
     s.command("[title=^w2$] move scratchpad")
     con = s.node("w2")["id"]
     s.run("show", str(con))
@@ -187,7 +182,7 @@ def test_a_hidden_window_comes_back_to_a_float_slot(session):
 
 def test_the_master_sent_to_another_workspace(session):
     s = session("master", config=CONFIG)
-    opened(s, 3)
+    s.fill(3)
     s.focus("w1")
     s.key("F5")
     assert s.shape() == "H[w2 w3]"
@@ -199,7 +194,7 @@ def test_the_master_sent_to_another_workspace(session):
 
 def test_a_native_move_to_a_workspace_joins_its_stack(session):
     s = session("master")
-    opened(s, 3)
+    s.fill(3)
     s.command("workspace 2")
     s.open("x1")
     s.open("x2")
@@ -223,14 +218,14 @@ def test_many_windows_opened_and_closed_quickly(session):
 def test_windows_sent_by_rule_to_a_hidden_workspace(session):
     s = session("master", config=CONFIG)
     s.open("w1")
-    opened(s, 3, "bg")
+    s.fill(3, "bg")
     assert s.shape("3") == "H[bg1 V[bg2 bg3]]"
     assert s.shape() == "w1"
 
 
 def test_config_reloads(session):
     s = session("master")
-    opened(s, 3)
+    s.fill(3)
     s.command("reload")
     assert s.shape() == "H[w1 V[w2 w3]]"
     s.open("w4")
@@ -243,7 +238,7 @@ def test_config_reloads(session):
 
 def test_windows_that_do_not_take_focus(session):
     s = session("master", config=CONFIG)
-    opened(s, 3)
+    s.fill(3)
     s.focus("w1")
     s.open("nf1")
     assert s.shape() == "H[w1 V[w2 w3 nf1]]"
@@ -253,7 +248,7 @@ def test_windows_that_do_not_take_focus(session):
 
 def test_the_master_closing_promotes_the_next_window(session):
     s = session("master")
-    opened(s, 4)
+    s.fill(4)
     s.close("w1")
     assert s.shape() == "H[w2 V[w3 w4]]"
     s.close("w3")
@@ -262,7 +257,7 @@ def test_the_master_closing_promotes_the_next_window(session):
 
 def test_opening_next_to_a_hovered_window(session):
     s = session("master")
-    opened(s, 3)
+    s.fill(3)
     s.focus("w1")
     s.open("w4")
     assert s.shape() == "H[w1 V[w2 w3 w4]]"
@@ -273,7 +268,7 @@ def test_opening_next_to_a_hovered_window(session):
 
 def test_a_crash_leaves_nothing_broken(session):
     s = session("master")
-    opened(s, 2)
+    s.fill(2)
     s.stop_daemon(signal.SIGKILL)
     s.start_daemon()
     s.focus("w1")
@@ -283,7 +278,7 @@ def test_a_crash_leaves_nothing_broken(session):
 
 def test_a_keyboard_resize_is_remembered(session):
     s = session("master", config="bindsym Mod4+F8 resize grow width 320 px\n")
-    opened(s, 3)
+    s.fill(3)
     s.focus("w1")
     s.key("F8")
     grown = s.width("w1")
@@ -294,7 +289,7 @@ def test_a_keyboard_resize_is_remembered(session):
 
 def test_the_height_of_the_master_in_wide(session):
     s = session("wide")
-    opened(s, 3)
+    s.fill(3)
     s.command("[title=^w1$] resize set height 65 ppt")
     s.close("w1")
     node, ws = s.node("w2"), s.workspace()
@@ -303,7 +298,7 @@ def test_the_height_of_the_master_in_wide(session):
 
 def test_a_resize_without_any_event_is_still_kept(session):
     s = session("centered")
-    opened(s, 2)
+    s.fill(2)
     s.command("[title=^w1$] resize set width 65 ppt")
     s.open("w3")
     assert s.width("w1") == 0.65
@@ -317,7 +312,7 @@ def test_a_stacked_empty_workspace_still_gets_the_layout(session, layout):
     from harness import expected
     s = session(layout)
     s.command("layout stacking")
-    opened(s, 3)
+    s.fill(3)
     assert s.shape() == expected(layout, 3)
     assert s.workspace()["layout"] == "splith"
 
@@ -325,7 +320,7 @@ def test_a_stacked_empty_workspace_still_gets_the_layout(session, layout):
 def test_default_undoes_a_stacked_workspace(session):
     s = session("default")
     s.command("layout tabbed")
-    opened(s, 2)
+    s.fill(2)
     assert s.shape() == "T[w1 w2]"
     s.command("workspace 2")
     s.choose("default")
@@ -340,7 +335,7 @@ def test_default_undoes_a_stacked_workspace(session):
 
 def test_a_workspace_built_in_a_container_is_rebuilt_without_it(session):
     s = session("master")
-    opened(s, 3)
+    s.fill(3)
     s.stop_daemon()
     s.command("[title=^w1$] layout splitv; [title=^w1$] layout splith")
     assert s.shape(exact=True) == "H[H[w1 V[w2 w3]]]"
@@ -351,7 +346,7 @@ def test_a_workspace_built_in_a_container_is_rebuilt_without_it(session):
 
 def test_closing_the_master_is_drawn_in_one_step(session):
     s = session("master")
-    opened(s, 3)
+    s.fill(3)
     s.command("[title=^w1$] resize set width 70 ppt")
     s.open("w4")
     drawn = s.drawn(lambda: s.close("w1"))
@@ -362,7 +357,7 @@ def test_closing_the_master_is_drawn_in_one_step(session):
 
 def test_the_master_keeps_its_size_down_to_one_window_and_back(session):
     s = session("master")
-    opened(s, 2)
+    s.fill(2)
     s.command("[title=^w1$] resize set width 70 ppt")
     s.open("w3")
     s.close("w2")
@@ -383,7 +378,7 @@ def test_a_master_resized_without_an_event_keeps_its_size_as_a_window_comes_in(s
     # sway reports nothing for a resize by the mouse or by swaymsg: the daemon
     # reads it while it watches after a focus change, before the next window.
     s = session("centered")
-    opened(s, 2)
+    s.fill(2)
     s.focus("w1")
     s.command("[title=^w1$] resize set width 70 ppt")
     s.wait(lambda: False, 0.6)
@@ -400,7 +395,7 @@ def test_a_master_resized_without_an_event_keeps_its_size_as_a_window_comes_in(s
 
 def test_a_wide_master_in_the_middle_keeps_equal_sides(session):
     s = session("master")
-    opened(s, 2)
+    s.fill(2)
     s.command("[title=^w1$] resize set width 75 ppt")
     s.choose("centered")
     # sway takes a resize from every sibling alike: the third window evens the
@@ -425,14 +420,14 @@ def test_a_wide_master_in_the_middle_keeps_equal_sides(session):
 
 def test_a_master_in_the_middle_keeps_equal_sides_as_its_columns_are_rebuilt(session):
     s = session("master", config="gaps inner 5\nbindsym Mod4+F10 kill\n")
-    opened(s, 2)
+    s.fill(2)
     s.command("[title=^w1$] resize set width 60 ppt")
     s.choose("centered")
     for index in range(3, 9):
         s.open(f"w{index}")
 
     def even():
-        widths = [node["rect"]["width"] for node in s.workspace()["nodes"]]
+        widths = s.columns()
         return len(widths) == 3 and abs(widths[0] - widths[2]) <= 2 and s.width("w1") == 0.6
     assert even()
     # Each close sends windows across to the other column, by key and by itself.
@@ -445,7 +440,7 @@ def test_a_master_in_the_middle_keeps_equal_sides_as_its_columns_are_rebuilt(ses
 
 def test_a_close_keeps_the_master_size_set_last_even_unseen(session):
     s = session("centered", config="gaps inner 5\nbindsym Mod4+F10 kill\n")
-    opened(s, 6)
+    s.fill(6)
     s.focus("w2")
     s.command("[title=^w1$] resize set width 68 ppt")
     s.wait(lambda: False, 0.6)
@@ -466,7 +461,7 @@ def test_a_close_keeps_the_master_size_set_last_even_unseen(session):
 
 def test_a_master_in_the_middle_keeps_its_place_as_windows_come_and_go(session):
     s = session("centered", config="gaps inner 5\n")
-    opened(s, 3)
+    s.fill(3)
     s.focus("w2")
     # As a mouse dragging the master's left edge leaves it: a narrow left side.
     s.command("[title=^w3$] resize set width 15 ppt")

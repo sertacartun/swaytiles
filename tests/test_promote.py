@@ -6,10 +6,7 @@ KEY = "bindsym Mod4+F9 nop layout master\nbindsym Mod4+F1 nop layout move left\n
 
 
 def started(session, layout, count=4, **options):
-    s = session(layout, config=KEY, **options)
-    for index in range(1, count + 1):
-        s.open(f"w{index}")
-    return s
+    return session(layout, config=KEY, **options).fill(count)
 
 
 def test_a_stack_window_becomes_master(session):

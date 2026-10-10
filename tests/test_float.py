@@ -17,8 +17,7 @@ def inside(area, node):
 
 def test_windows_cascade_inside_the_output(session):
     s = session("float")
-    for index in range(1, 7):
-        s.open(f"w{index}")
+    s.fill(6)
     area, nodes = floats(s)
     assert list(nodes) == [f"w{index}" for index in range(1, 7)]
     assert all(inside(area, node) for node in nodes.values())
@@ -31,8 +30,7 @@ def test_windows_cascade_inside_the_output(session):
 
 def test_a_new_window_never_covers_another_exactly(session):
     s = session("float")
-    for index in range(1, 4):
-        s.open(f"w{index}")
+    s.fill(3)
     s.close("w2")
     s.open("w4")
     area, nodes = floats(s)
@@ -43,8 +41,7 @@ def test_a_new_window_never_covers_another_exactly(session):
 
 def test_a_tiled_window_moved_in_floats_and_fits(session):
     s = session("master", workspaces={"3": "float"}, config=MOVES)
-    for index in range(1, 4):
-        s.open(f"w{index}")
+    s.fill(3)
     s.command("workspace 3")
     s.open("f1")
     s.command("workspace 1")
@@ -86,8 +83,7 @@ def test_a_floating_window_moved_to_a_tiled_workspace_goes_to_its_place_in_one_s
 
 def test_leaving_float_restores_the_order(session):
     s = session("master")
-    for index in range(1, 5):
-        s.open(f"w{index}")
+    s.fill(4)
     s.choose("float")
     assert s.shape() == "- F[w1 w2 w3 w4]"
     s.open("w5")

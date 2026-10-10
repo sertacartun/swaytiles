@@ -85,5 +85,5 @@ The layout turns that list into a tree of sway containers.
 were not running. It is the layout until you pick one.
 
 Each workspace has its own layout, remembered across restarts; a new
-workspace starts with the last layout picked. The menu marks the current
-one, and says when it is paused.
+workspace starts with the one set by `swaytiles default`. The menu marks
+the current one.

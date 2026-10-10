@@ -11,10 +11,9 @@
   - If only a container's style changed and the result is another
     layout, the workspace switches to it. Turning the stack of `master`
     into tabs makes it `tabbed-master`.
-  - Otherwise the layout pauses on that workspace and sway places new
-    windows as usual. The menu shows the layout as paused. The layout
-    comes back by itself once the windows fit it again, or when you pick
-    it from the menu.
+  - Otherwise the workspace switches to `default` and sway places new
+    windows as usual, with a notification that says so. The layout comes
+    back when you pick it from the menu.
 - **Sizes.** Whatever you resize, with the keyboard or the mouse, keeps
   its size as windows open and close, as in plain sway: windows move
   between the layout's places, and each place keeps the size you gave
@@ -78,14 +77,17 @@ Bindings inside a `mode` block are not taken over, and neither is a
 binding that does more than move (`move left; focus left`). For those,
 bind `exec swaytiles move left` yourself, or `nop layout move left`,
 which the daemon reads from sway's binding events without a process
-being started. `nop layout master` is the same for `swaytiles swap`, `nop layout
-show` for `swaytiles show`, and `nop layout close` for `kill`.
+being started. `nop layout master` is the same for `swaytiles swap`,
+`nop layout show` for `swaytiles show`, `nop layout close` for `kill`,
+`nop layout hide` for `move scratchpad` and `nop layout float toggle`
+for `floating toggle`.
 
 ## Setup
 
 - **Move keys.** swaytiles reads your sway config and, while it runs,
   rebinds the keys bound to sway's own `move left`, `move right`,
-  `move up`, `move down` and `move container to workspace …`. Your
+  `move up`, `move down`, `move container to workspace …`, `move
+  scratchpad` and `floating toggle|enable|disable`. Your
   config file is never edited, and when swaytiles stops the keys are
   sway's own moves again. To turn this off, add `--no-keys` to the
   `ExecStart` line of the service.
@@ -115,8 +117,8 @@ show` for `swaytiles show`, and `nop layout close` for `kill`.
 
 - `~/.local/state/swaytiles.json`: the layout of every workspace and
   the one for new workspaces.
-- `$XDG_RUNTIME_DIR/swaytiles.*`: the lock, the paused workspaces and
-  the last arrangement of the running session.
+- `$XDG_RUNTIME_DIR/swaytiles.*`: the lock, and the last arrangement of
+  the running session with the windows kept tiled on float workspaces.
 
 ## Tests
 

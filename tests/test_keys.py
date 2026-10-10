@@ -15,10 +15,7 @@ NATIVE = ("set $mod Mod4\nset $left F1\n"
 
 
 def started(session, layout="master", count=4, config=NATIVE, **options):
-    s = session(layout, config=config, **options)
-    for index in range(1, count + 1):
-        s.open(f"w{index}")
-    return s
+    return session(layout, config=config, **options).fill(count)
 
 
 def test_reading_bindings_follows_variables_blocks_and_includes(tmp_path):
