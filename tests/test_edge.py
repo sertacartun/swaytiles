@@ -396,3 +396,48 @@ def test_a_master_resized_without_an_event_keeps_its_size_as_a_window_comes_in(s
         os.kill(s.daemon.pid, signal.SIGCONT)
     s.settle()
     assert s.width("w1") == 0.7
+
+
+def test_a_wide_master_in_the_middle_keeps_equal_sides(session):
+    s = session("master")
+    opened(s, 2)
+    s.command("[title=^w1$] resize set width 75 ppt")
+    s.choose("centered")
+    # sway takes a resize from every sibling alike: the third window evens the
+    # sides out before the master takes its share, in sway's own rule.
+    os.kill(s.daemon.pid, signal.SIGSTOP)
+    try:
+        s.open("w3", settle=False)
+        s.wait(lambda: False, 0.2)
+        assert s.shape() == "H[w3 w1 w2]"
+        assert s.width("w1") == 0.75
+        assert abs(s.width("w3") - s.width("w2")) <= 0.01
+    finally:
+        os.kill(s.daemon.pid, signal.SIGCONT)
+    assert not s.drawn(lambda: None)
+    # Closing a side gives its room back to the master: it keeps its share.
+    s.close("w3")
+    assert s.width("w1") == 0.75
+    s.open("w4")
+    assert s.width("w1") == 0.75
+    assert abs(s.width("w4") - s.width("w2")) <= 0.01
+
+
+def test_a_master_in_the_middle_keeps_equal_sides_as_its_columns_are_rebuilt(session):
+    s = session("master", config="gaps inner 5\nbindsym Mod4+F10 kill\n")
+    opened(s, 2)
+    s.command("[title=^w1$] resize set width 60 ppt")
+    s.choose("centered")
+    for index in range(3, 9):
+        s.open(f"w{index}")
+
+    def even():
+        widths = [node["rect"]["width"] for node in s.workspace()["nodes"]]
+        return len(widths) == 3 and abs(widths[0] - widths[2]) <= 2 and s.width("w1") == 0.6
+    assert even()
+    # Each close sends windows across to the other column, by key and by itself.
+    s.focus("w2")
+    s.key("F10")
+    assert even(), s.shape()
+    s.close("w3")
+    assert even(), s.shape()

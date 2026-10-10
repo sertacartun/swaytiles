@@ -76,8 +76,8 @@ Bindings inside a `mode` block are not taken over, and neither is a
 binding that does more than move (`move left; focus left`). For those,
 bind `exec swaytiles move left` yourself, or `nop layout move left`,
 which the daemon reads from sway's binding events without a process
-being started. `nop layout master` is the same for `swaytiles swap`, and `nop layout
-show` for `swaytiles show`.
+being started. `nop layout master` is the same for `swaytiles swap`, `nop layout
+show` for `swaytiles show`, and `nop layout close` for `kill`.
 
 ## Setup
 
@@ -87,6 +87,12 @@ show` for `swaytiles show`.
   config file is never edited, and when swaytiles stops the keys are
   sway's own moves again. To turn this off, add `--no-keys` to the
   `ExecStart` line of the service.
+- **Closing.** The key bound to `kill` is taken over the same way, so a
+  window closed from the middle of a layout leaves no hole for sway to
+  draw: the others take their places as it goes, and the focus goes to
+  the window that takes its place, the one under the mouse. A window that asks
+  before it closes, or will not, comes back after a second. A window
+  that closes by itself leaves its hole for a moment.
 - **Menu program.** `swaytiles menu --launcher NAME` opens the menu in
   fuzzel, rofi, wofi, tofi, bemenu, wmenu or dmenu, whichever you name.
   fuzzel, rofi and wofi also show a picture of each layout, a small
