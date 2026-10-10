@@ -15,9 +15,11 @@
     windows as usual. The menu shows the layout as paused. The layout
     comes back by itself once the windows fit it again, or when you pick
     it from the menu.
-- **The master size.** Resize the master with the keyboard or the mouse
-  and it keeps that size when windows open and close, when the master
-  closes and when you switch between layouts.
+- **Sizes.** Whatever you resize, with the keyboard or the mouse, keeps
+  its size as windows open and close, as in plain sway: windows move
+  between the layout's places, and each place keeps the size you gave
+  it. The master also keeps its size when windows come and go beside it,
+  when it closes and when you switch between layouts.
 - **Fullscreen.** A workspace with a fullscreen window is left untouched
   until the window leaves fullscreen.
 - **Floating windows.** Dialogs float as usual. A window you float for a

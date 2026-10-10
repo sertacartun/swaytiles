@@ -3,6 +3,7 @@
 import subprocess
 import sys
 
+import pytest
 from harness import DAEMON
 
 import swaytiles
@@ -202,3 +203,13 @@ def test_closing_in_centered_focuses_the_window_that_fills_the_room(session):
     s.focus("w4")
     s.key("F10")
     assert s.focused() == "w2"
+
+
+@pytest.mark.parametrize("key", ["F10", "F9"])
+def test_a_window_leaving_from_the_side_leaves_a_window_focused(session, key):
+    # Swapped down to the place that goes, the window leaves its container
+    # empty, and sway would leave the focus on that container.
+    s = started(session, "centered", count=3)
+    s.focus("w2")
+    s.key(key)
+    assert s.focused() == "w3"

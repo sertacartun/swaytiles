@@ -1695,7 +1695,8 @@ class Daemon:
         if destination is None or destination["id"] == source["id"]:
             return self.sway.command(f"[con_id={con}] {native}")
         name = destination["name"]
-        before, away = self.leaving(source, node)
+        # A move by name or number leaves the focus behind.
+        before, away = self.leaving(source, node, focus=bool(target))
         steps = self.entering(destination, con, direction)
         self.carried = (con, name)
         command = native if target else f"move container to workspace {quoted(name)}, focus"
@@ -1784,7 +1785,7 @@ class Daemon:
             steps.append(f"[con_id={con}] swap container with con_id {other}")
         return (steps, model) if trimmed(shape(model)) == target else None
 
-    def leaving(self, workspace, node):
+    def leaving(self, workspace, node, focus=False):
         """The commands to send before and after the one that takes `node`
         away from `workspace`, so the others are in the layout as it goes and
         sway never draws the hole it leaves. Where sway's own going leaves the
@@ -1792,7 +1793,9 @@ class Daemon:
         place by place, to the place the layout gives up, so every other place
         keeps the size sway keeps for it, and what is left is put in order
         after: the others move up a place, as when the window in the last
-        place goes in plain sway."""
+        place goes in plain sway. With `focus`, the focus that leaves with it
+        goes to the window that takes its place: sway would put it where the
+        window was, which may be a container."""
         name, con = workspace["name"], node["id"]
         order = self.ordered(tiled(workspace))
         ids = [other for other in order if other != con]
@@ -1801,12 +1804,13 @@ class Daemon:
         self.farewell(node)
         rest, target = copied(workspace), self.target(name, ids)
         take_out(rest, con)
+        heir = [f"[con_id={self.taker(name, order, con, node['rect'], workspace['rect'])}] focus"] if focus else []
 
         def sized(model):
             # sway gives the room of a container beside the master to the master too.
             return self.resize(name, target, ids, workspace) if len(top(model)["nodes"]) < len(top(workspace)["nodes"]) else []
         if trimmed(shape(rest)) == target and not wrapped(rest):
-            return [], sized(rest)
+            return [], sized(rest) + heir
         model, before = copied(workspace), []
         for other in order[order.index(con) + 1:]:
             swap(model, con, other)
@@ -1814,8 +1818,8 @@ class Daemon:
         take_out(model, con)
         steps = reconcile(model, target)
         if steps is None:
-            return [], (assemble(rest, target) or []) + self.resize(name, target, ids, workspace)
-        return before, steps + sized(model)
+            return [], (assemble(rest, target) or []) + self.resize(name, target, ids, workspace) + heir
+        return before, steps + sized(model) + heir
 
     def switch(self, mode):
         """`floating toggle`, `enable` or `disable` of the focused window, or
@@ -1833,7 +1837,7 @@ class Daemon:
         if joins:
             self.sway.command(f"[con_id={con}] floating disable", *self.entering(source, con))
         else:
-            before, after = self.leaving(source, node)
+            before, after = self.leaving(source, node, focus=mode == "scratchpad")
             self.sway.command(*before, f"[con_id={con}] {'floating enable' if mode != 'scratchpad' else native}", *after)
         return self.sync()
 
@@ -1861,10 +1865,8 @@ class Daemon:
         if trimmed(shape(rest)) == target and not regrouped:
             # The close event hands the focus on.
             return self.sway.command("kill")
-        before, after = self.leaving(source, node)
-        self.sway.command(*before, f"[con_id={con}] move scratchpad", *after,
-                          refocus(self.taker(source["name"], self.ordered(tiled(source)), con, node["rect"], source["rect"])),
-                          f"[con_id={con}] kill")
+        before, after = self.leaving(source, node, focus=True)
+        self.sway.command(*before, f"[con_id={con}] move scratchpad", *after, f"[con_id={con}] kill")
         threading.Timer(CLOSING, self.sway.tick, [f"{ACT} show {con}"]).start()
         return self.sync()
 
