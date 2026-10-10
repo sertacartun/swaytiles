@@ -6,7 +6,7 @@ plain sway, with the daemon stopped, show what the sizes should be."""
 
 import pytest
 
-CONFIG = "gaps inner 5\nbindsym Mod4+F10 kill\n"
+CONFIG = "gaps inner 5\nbindsym Mod4+F10 kill\nbindsym Mod4+F9 move scratchpad\n"
 
 # A layout, its windows, how they are sized by hand, and the window to close.
 SIZED = {
@@ -111,3 +111,26 @@ def test_a_new_window_takes_room_only_beside_it(session, layout, kept):
     s.open("new")
     assert rects(s, *kept) == before
 
+
+
+def test_a_window_moved_in_takes_room_only_beside_it(session):
+    count, sizes, _ = SIZED["dwindle"]
+    s = built(session, "dwindle", count, sizes)
+    before = rects(s, "w1", "w2", "w3")
+    s.command("workspace 2")
+    s.open("x")
+    s.run("move", "number", "1")
+    s.settle()
+    assert s.shape() == "H[w1 V[w2 H[w3 V[w4 H[w5 x]]]]]"
+    assert rects(s, "w1", "w2", "w3") == before
+
+
+def test_a_window_hidden_and_shown_again_leaves_the_columns_as_they_were(session):
+    count, sizes, _ = SIZED["centered"]
+    s = built(session, "centered", count, sizes)
+    widths = [node["rect"]["width"] for node in s.workspace()["nodes"]]
+    s.focus("w2")
+    s.key("F9")
+    s.run("show")
+    s.settle()
+    assert [node["rect"]["width"] for node in s.workspace()["nodes"]] == widths

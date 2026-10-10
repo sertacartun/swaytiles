@@ -1753,7 +1753,36 @@ class Daemon:
             return []
         order = [*ids[:at], con, *ids[at:]]
         target = self.target(name, order)
-        return after(ids[-1], con) + settling(workspace, target, con, ids[-1]) + self.resize(name, target, order, workspace)
+        arrival = self.arrival(workspace, name, ids, con, at, target)
+        if arrival is None:
+            return after(ids[-1], con) + settling(workspace, target, con, ids[-1]) + self.resize(name, target, order, workspace)
+        steps, model = arrival
+        # The places stay; the master gives room only to one beside it.
+        widened = len(top(model)["nodes"]) > len(top(workspace)["nodes"])
+        return steps + (self.resize(name, target, order, workspace) if widened else [])
+
+    def arrival(self, workspace, name, ids, con, at, target):
+        """The commands that bring `con` into `workspace` at place `at` and keep
+        the places there, with the model they make: it comes in at the end, as
+        the tile rule puts a new window, and is swapped back place by place, so
+        the windows after it move down a place and each place keeps its size.
+        None where the tile rule has no plan for it."""
+        plan = foresee(workspace, self.target(name, [*ids, NEXT]))
+        if plan is None:
+            return None
+        anchor, way, nest = plan
+        model, steps = copied(workspace), after(anchor, con)
+        put_after(model, anchor, con)
+        if way:
+            move(model, con, way)
+            steps.append(f"[con_id={con}] move {way}")
+        if nest:
+            enclose(model, con, nest)
+            steps.append(f"[con_id={con}] split h, {layout_command(nest)}")
+        for other in reversed(ids[at:]):
+            swap(model, con, other)
+            steps.append(f"[con_id={con}] swap container with con_id {other}")
+        return (steps, model) if trimmed(shape(model)) == target else None
 
     def leaving(self, workspace, node):
         """The commands to send before and after the one that takes `node`
