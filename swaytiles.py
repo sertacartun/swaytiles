@@ -1266,14 +1266,13 @@ class Daemon:
         was = span(master, axis) / now * (before - span(gone, axis))
         keep(self.ratios, name, was / node["rect"][axis], 1 / (len(node["nodes"]) + 1), exact=True)
 
-    def farewell(self, node):
+    def farewell(self, node, workspace):
+        """Read the master's share as it leaves `workspace`, for the next master."""
         name = self.where.get(node["id"])
         built = self.built.get(name)
-        if len(branches(built)) < 2 or built[0] not in ("splith", "splitv"):
+        if workspace is None or len(branches(built)) < 2 or node["id"] not in built[1] or built[0] not in ("splith", "splitv"):
             return
-        master = next((con for con in self.order if con in leaves(built)), None)
-        workspace = named(self.sway.tree(), name)
-        if master == node["id"] and master in built[1] and workspace is not None:
+        if next((con for con in self.order if con in leaves(built)), None) == node["id"]:
             axis = extent(built[0])
             keep(self.ratios, name, span(node, axis) / workspace["rect"][axis], 1 / len(built[1]))
 
@@ -1497,7 +1496,7 @@ class Daemon:
             if (node["rect"]["width"], node["rect"]["height"] + node["deco_rect"]["height"]) == (width, height):
                 time.sleep(max(0.05, hold - (time.monotonic() - begin)))
                 break
-            time.sleep(0.02)
+            time.sleep(0.05)
         self.sway.command(f"[con_id={con}] opacity 1")
 
     def float_all(self, workspace, ids, new, shown):
@@ -1612,10 +1611,12 @@ class Daemon:
         to the others, the master too."""
         return len(top(workspace)["nodes"]) < len(branches(self.built.get(workspace["name"])))
 
-    def arrange(self, new=None, moved=False):
+    def arrange(self, new=None, moved=False, tree=None):
+        """Bring every workspace in line, from `tree` when the caller has just
+        read it."""
         heir, self.heir = self.heir, None
         gone, self.gone = self.gone, {}
-        tree = self.sway.tree()
+        tree = tree or self.sway.tree()
         unseen = [ws["name"] for ws in workspaces(tree) if ws["name"] not in self.state["workspaces"]]
         if unseen:
             self.state["workspaces"].update(dict.fromkeys(unseen, self.state["layout"]))
@@ -1660,10 +1661,9 @@ class Daemon:
                     self.measure(workspace, ids, new, exact=name in gone)
                 shaped = self.shape_up(workspace, ids, new, focused, regrouped) or shaped
         tree = self.sway.tree() if shaped else tree
-        if heir is not None and focused_node(tree)["id"] != heir:
-            self.sway.command(refocus(heir))
-            tree = self.sway.tree()
-        self.sway.command(*self.anchors(tree))
+        # The focus goes with the rules, which do not read it, in one message.
+        handover = [refocus(heir)] if heir is not None and focused_node(tree)["id"] != heir else []
+        self.sway.command(*handover, *self.anchors(tree))
         self.record(tree)
         self.remember()
         if shaped:
@@ -1777,7 +1777,7 @@ class Daemon:
         the tile rule puts a new window, and is swapped back place by place, so
         the windows after it move down a place and each place keeps its size.
         None where the tile rule has no plan for it."""
-        plan = foresee(workspace, self.target(name, [*ids, NEXT]))
+        plan = self.plan(workspace, name, self.target(name, [*ids, NEXT]))
         if plan is None:
             return None
         anchor, way, nest = plan
@@ -1808,7 +1808,7 @@ class Daemon:
         ids = [other for other in order if other != con]
         if node["type"] != "con" or self.tiling(name) is None or not ids or covered(workspace):
             return [], []
-        self.farewell(node)
+        self.farewell(node, workspace)
         rest, target = copied(workspace), self.target(name, ids)
         take_out(rest, con)
         handover = [f"[con_id={self.taker(name, order, con, node['rect'], workspace['rect'])}] focus"] if focus else []
@@ -1900,6 +1900,9 @@ class Daemon:
         return self.sync()
 
     def escape(self, direction, refocused):
+        if "float" not in self.state["workspaces"].values():
+            # Only float workspaces carry the focus across outputs.
+            return
         tree = self.sway.tree()
         node = focused_node(tree)
         if node["type"] == "workspace":
@@ -1992,7 +1995,7 @@ class Daemon:
         if kind == "idle":
             if self.drifted(tree := self.sway.tree()):
                 self.watching = 0.0
-                self.arrange()
+                self.arrange(tree=tree)
             else:
                 self.remeasure(tree)
         elif kind == "tick":
@@ -2015,7 +2018,7 @@ class Daemon:
                 self.learn(event["binding"], command)
                 self.remeasure(self.sway.tree())
             elif self.drifted(tree := self.sway.tree()):
-                self.arrange()
+                self.arrange(tree=tree)
             else:
                 self.remeasure(tree)
         elif kind == "output":
@@ -2038,18 +2041,18 @@ class Daemon:
             self.arrange()
         elif kind == "window" and change in ("new", "close", "floating", "move"):
             con = event["container"]["id"]
-            if change == "close":
-                self.farewell(event["container"])
-                name = self.where.get(con)
-                room = next((ws["rect"] for ws in workspaces(self.sway.tree()) if ws["name"] == name), None)
-                if self.tiling(name) is not None:
-                    self.gone[name] = event["container"]
-                if event["container"].get("focused") and room is not None and self.tiling(name) is not None:
+            name, tree = self.where.get(con), None
+            if change == "close" and self.tiling(name) is not None:
+                tree = self.sway.tree()
+                workspace = named(tree, name)
+                self.farewell(event["container"], workspace)
+                self.gone[name] = event["container"]
+                if event["container"].get("focused") and workspace is not None:
                     # sway focuses the window last focused near it; the one
                     # that takes its place is the one under the mouse.
                     built = self.built.get(name)
                     ids = self.ordered(leaves(built)) if built is not None else []
-                    self.heir = self.taker(name, ids, con, event["container"]["rect"], room)
+                    self.heir = self.taker(name, ids, con, event["container"]["rect"], workspace["rect"])
             if change == "floating" and event["container"]["type"] == "con" and self.chosen(self.where.get(con)) == "float":
                 self.kept[con] = self.where[con]
             elif change == "floating":
@@ -2060,7 +2063,7 @@ class Daemon:
                 self.sync()
                 if con not in self.order:
                     self.order.append(con)
-            self.arrange(con, moved=change == "move")
+            self.arrange(con, moved=change == "move", tree=tree)
 
     def adopt(self):
         """Put the layout's moves on the keys that the config binds to sway's
