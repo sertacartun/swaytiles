@@ -112,7 +112,6 @@ def test_a_new_window_takes_room_only_beside_it(session, layout, kept):
     assert rects(s, *kept) == before
 
 
-
 def test_a_window_moved_in_takes_room_only_beside_it(session):
     count, sizes, _ = SIZED["dwindle"]
     s = built(session, "dwindle", count, sizes)
@@ -134,3 +133,38 @@ def test_a_window_hidden_and_shown_again_leaves_the_columns_as_they_were(session
     s.run("show")
     s.settle()
     assert [node["rect"]["width"] for node in s.workspace()["nodes"]] == widths
+
+
+def test_a_window_closing_by_itself_in_the_middle_of_dwindle_leaves_the_layout_whole(session):
+    # sway's `split none` takes away every container left with one child up
+    # the tree, not only the one it is run in.
+    s = session("dwindle", config=CONFIG)
+    for index in range(1, 5):
+        s.open(f"w{index}")
+    s.close("w3")
+    assert s.shape(exact=True) == "H[w1 V[w2 H[w4]]]"
+
+
+@pytest.mark.parametrize("layout", ["tabbed", "stacking"])
+def test_the_last_window_closing_in_tabs_is_no_trouble(session, layout):
+    s = session(layout, config=CONFIG)
+    s.open("w1")
+    s.close("w1")
+    s.open("w2")
+    assert s.shape() == f"{'T' if layout == 'tabbed' else 'S'}[w2]"
+
+
+def test_the_master_on_top_keeps_its_size_as_windows_beside_it_close_again_and_again(session):
+    # Title bars count: sway leaves them out of a window's rect.
+    s = session("wide", config=CONFIG)
+    s.open("w1")
+    s.open("w2")
+    s.command("[title=^w1$] resize set height 60 ppt")
+    s.focus("w1")
+    s.wait(lambda: False, 0.6)
+    for index in range(3, 7):
+        s.close(f"w{index - 1}")
+        s.open(f"w{index}")
+    master, ws = s.node("w1"), s.workspace()
+    height = master["rect"]["height"] + master["deco_rect"]["height"]
+    assert abs(height / ws["rect"]["height"] - 0.6) < 0.01
