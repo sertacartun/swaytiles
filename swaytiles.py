@@ -893,23 +893,12 @@ def last_focused(node):
     return node["id"]
 
 
-def successor(workspace, con):
-    """The window sway focuses when the focused `con` closes: the one last
-    focused in the nearest container around it that holds another."""
-    def latest(node):
-        children = node["nodes"] + node.get("floating_nodes", [])
-        for id in node["focus"]:
-            child = next((child for child in children if child["id"] == id), None)
-            if child is None or child["id"] == con:
-                continue
-            found = latest(child) if child["nodes"] else child["id"]
-            if found is not None:
-                return found
-        return None
-    for node in reversed(ancestors(workspace, con)[:-1]):
-        if (found := latest(node)) is not None:
-            return found
-    return None
+def heir(ids, con):
+    """The window that takes the place of `con` in the order `ids` as it goes:
+    the next one, or the one before at the end. The mouse that focused `con`
+    is over it now."""
+    rest = [other for other in ids if other != con]
+    return rest[min(ids.index(con), len(rest) - 1)] if con in ids and rest else None
 
 
 def floater(workspace, node, direction):
@@ -984,6 +973,7 @@ class Daemon:
         self.anchored = {}
         self.slots = {}
         self.where = {}
+        self.heir = None
         self.names = {}
         self.pending = {}
         self.areas = {}
@@ -1408,7 +1398,9 @@ class Daemon:
         for workspace in workspaces(tree):
             if not covered(workspace) and self.tiling(workspace["name"]) is not None and (ids := self.ordered(tiles[workspace["id"]])):
                 self.inspect(workspace, ids, arrived)
-        focused, onscreen, shaped = focused_node(tree)["id"], visible(tree), False
+        heir, self.heir = self.heir, None
+        heir = heir if heir in present else None
+        focused, onscreen, shaped = heir or focused_node(tree)["id"], visible(tree), False
         for workspace in workspaces(tree):
             name = workspace["name"]
             ids = self.ordered(tiles[workspace["id"]])
@@ -1426,6 +1418,9 @@ class Daemon:
                     self.measure(workspace, ids, new)
                 shaped = self.shape_up(workspace, ids, new, focused) or shaped
         tree = self.sway.tree() if shaped else tree
+        if heir is not None and focused_node(tree)["id"] != heir:
+            self.sway.command(refocus(heir))
+            tree = self.sway.tree()
         self.sway.command(*self.anchors(tree))
         self.record(tree)
         self.remember()
@@ -1562,7 +1557,7 @@ class Daemon:
         layout without it, sway would draw that hole before the daemon could
         fill it, so the window goes to the scratchpad and the others to their
         places in the same step, and it is closed from there, the focus going
-        where sway's own close would put it. A window still there a moment
+        to the window that takes its place. A window still there a moment
         later asks first or will not close, and comes back."""
         node, source = focused_window(self.sway.tree())
         if source is None or node["nodes"] or node["type"] != "con" or self.tiling(source["name"]) is None:
@@ -1576,11 +1571,10 @@ class Daemon:
         # sway gives the room of a window beside the master to the master too.
         regrouped = self.sizing(source["name"], target, ids) and len(top(rest)["nodes"]) < len(top(source)["nodes"])
         if trimmed(shape(rest)) == target and not regrouped:
+            # The close event hands the focus on.
             return self.sway.command("kill")
-        # The scratchpad focuses another window than sway would on a close.
-        focus = successor(source, con)
         self.sway.command(f"[con_id={con}] move scratchpad", *self.leaving(source, node),
-                          *([refocus(focus)] if focus is not None else []), f"[con_id={con}] kill")
+                          refocus(heir(self.ordered(tiled(source)), con)), f"[con_id={con}] kill")
         threading.Timer(CLOSING, self.sway.tick, [f"{ACT} show {con}"]).start()
         return self.sync()
 
@@ -1749,6 +1743,11 @@ class Daemon:
             con = event["container"]["id"]
             if change == "close":
                 self.farewell(event["container"])
+                if event["container"].get("focused"):
+                    # sway focuses the window last focused near it; the one
+                    # that takes its place is the one under the mouse.
+                    name = self.where.get(con)
+                    self.heir = heir([other for other in self.order if self.where.get(other) == name and other in self.tiled], con)
             if change == "floating" and event["container"]["type"] == "con" and self.chosen(self.where.get(con)) == "float":
                 self.kept[con] = self.where[con]
             elif change == "floating":

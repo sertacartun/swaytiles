@@ -182,9 +182,13 @@ def test_a_window_that_will_not_close_comes_back(session):
     assert s.focused() == "stubborn"
 
 
-def test_closing_by_key_focuses_the_window_sways_own_close_would(session):
+def test_closing_focuses_the_window_that_takes_its_place(session):
+    # sway would focus the window last focused near it, w5; the one that takes
+    # the place, w4, is the one under the mouse.
     s = started(session, "spiral", count=6)
     for title in ("w5", "w1", "w3"):
         s.focus(title)
     s.key("F10")
+    assert s.focused() == "w4"
+    s.close("w4")
     assert s.focused() == "w5"

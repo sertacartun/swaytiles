@@ -89,7 +89,8 @@ show` for `swaytiles show`, and `nop layout close` for `kill`.
   `ExecStart` line of the service.
 - **Closing.** The key bound to `kill` is taken over the same way, so a
   window closed from the middle of a layout leaves no hole for sway to
-  draw: the others take their places as it goes. A window that asks
+  draw: the others take their places as it goes, and the focus goes to
+  the window that takes its place, the one under the mouse. A window that asks
   before it closes, or will not, comes back after a second. A window
   that closes by itself leaves its hole for a moment.
 - **Menu program.** `swaytiles menu --launcher NAME` opens the menu in
