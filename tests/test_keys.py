@@ -192,3 +192,13 @@ def test_closing_focuses_the_window_that_takes_its_place(session):
     assert s.focused() == "w4"
     s.close("w4")
     assert s.focused() == "w5"
+
+
+def test_closing_in_centered_focuses_the_window_that_fills_the_room(session):
+    # The next window in the order is in the other column: the one above
+    # grows into the room.
+    s = started(session, "centered")
+    assert s.shape() == "H[w3 w1 V[w2 w4]]"
+    s.focus("w4")
+    s.key("F10")
+    assert s.focused() == "w2"

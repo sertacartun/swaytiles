@@ -460,16 +460,17 @@ def gap(workspace, axis):
     return max(0, (node["rect"][axis] - sum(span(child, axis) for child in children)) // (len(children) - 1))
 
 
-def balancing(workspace, master, side, axis, share):
+def balancing(workspace, master, sides, axis, share):
     """The commands that give a master in the middle `share` ppt of the
-    workspace and its sides the same room, whatever room they have now.
-    sway spreads each resize over every sibling alike, so setting the master
-    and then one side quarters the difference between the sides each time:
-    after four rounds less than a pixel of it is left."""
+    workspace and its two `sides` the same room, whatever room they have now.
+    sway spreads each resize over every sibling alike, and refuses one that
+    would leave a sibling too small, so each round sets both sides and then
+    the master: that cuts the error to an eighth, and a side too small to give
+    room is first given some. After five rounds less than a pixel is left."""
     room = workspace["rect"][axis]
     rest = (room - 2 * gap(workspace, axis) - room * share // 100) // 2
-    to_share = f"[con_id={master}] resize set {axis} {share} ppt"
-    return [to_share, f"[con_id={side}] resize set {axis} {rest} px"] * 4 + [to_share]
+    return [*(f"[con_id={side}] resize set {axis} {rest} px" for side in sides),
+            f"[con_id={master}] resize set {axis} {share} ppt"] * 5
 
 
 def beside(workspace, node, direction, order):
@@ -894,11 +895,36 @@ def last_focused(node):
 
 
 def heir(ids, con):
-    """The window that takes the place of `con` in the order `ids` as it goes:
-    the next one, or the one before at the end. The mouse that focused `con`
-    is over it now."""
+    """The window that comes in the place of `con` in the order `ids` as it
+    goes: the next one, or the one before at the end."""
     rest = [other for other in ids if other != con]
     return rest[min(ids.index(con), len(rest) - 1)] if con in ids and rest else None
+
+
+def areas(node, master=None, share=None, x=0.0, y=0.0, width=1.0, height=1.0):
+    """Where the layout `node` puts each window, as parts of the workspace:
+    splits shared evenly, but for a master that takes `share` of its own."""
+    if isinstance(node, int):
+        return {node: (x, y, width, height)}
+    layout, children = node
+    if layout in TABBED:
+        return {leaf: box for child in children for leaf, box in areas(child, master, share, x, y, width, height).items()}
+    across = layout == "splith"
+    room = width if across else height
+    sizes = [room / len(children)] * len(children)
+    if share is not None and master in children and len(children) > 1:
+        sizes = [room * share if child == master else room * (1 - share) / (len(children) - 1) for child in children]
+    found, offset = {}, 0.0
+    for child, size in zip(children, sizes, strict=True):
+        found.update(areas(child, master, share, *((x + offset, y, size, height) if across else (x, y + offset, width, size))))
+        offset += size
+    return found
+
+
+def overlap(first, second):
+    width = min(first[0] + first[2], second[0] + second[2]) - max(first[0], second[0])
+    height = min(first[1] + first[3], second[1] + second[3]) - max(first[1], second[1])
+    return max(0.0, width) * max(0.0, height)
 
 
 def floater(workspace, node, direction):
@@ -974,6 +1000,7 @@ class Daemon:
         self.slots = {}
         self.where = {}
         self.heir = None
+        self.gone = {}
         self.names = {}
         self.pending = {}
         self.areas = {}
@@ -1049,7 +1076,7 @@ class Daemon:
         save_state(self.state)
         self.built.pop(name, None)
 
-    def measure(self, workspace, ids, new=None):
+    def measure(self, workspace, ids, new=None, exact=False):
         """Read the master's share of the workspace. A window sway has just put
         next to the master took its room from all of them alike, so the share
         is read from the room the others have."""
@@ -1059,15 +1086,33 @@ class Daemon:
         if node["layout"] in ("splith", "splitv") and len(others) > 1 and master is not None:
             axis = "width" if node["layout"] == "splith" else "height"
             room = node["rect"][axis] - sum(span(child, axis) for child in node["nodes"] if tiled(child) == [new])
-            self.share(workspace["name"], node["layout"], master, room, len(others))
+            self.share(workspace["name"], node["layout"], master, room, len(others), exact)
 
-    def share(self, name, layout, master, room, count):
+    def share(self, name, layout, master, room, count, exact=False):
+        """Keep the master's share. A share read in passing may be a step off,
+        so it takes a change of two to replace the saved one; one read `exact`
+        is taken as it is."""
         axis = "width" if layout == "splith" else "height"
         ratio = round(span(master, axis) / room, 2)
         if abs(ratio - 1 / count) < 0.02:
             self.ratios.pop(name, None)
-        elif abs(ratio - self.ratios.get(name, 0)) >= 0.02:
+        elif abs(ratio - self.ratios.get(name, 0)) >= (0.01 if exact else 0.02):
             self.ratios[name] = ratio
+
+    def measure_gone(self, workspace, ids, rect):
+        """Read the master's share as it was before a window beside it closed,
+        at `rect`: sway gave that window's room to the others in proportion,
+        and the window that closed was not the daemon's to read before."""
+        node, seen = top(workspace), self.built.get(workspace["name"])
+        master = next((child for child in node["nodes"] if child["id"] == ids[0]), None)
+        # The master stood beside the window that closed, at the same level.
+        if node["layout"] not in ("splith", "splitv") or master is None or isinstance(seen, int) or ids[0] not in seen[1]:
+            return
+        axis = "width" if node["layout"] == "splith" else "height"
+        after = sum(span(child, axis) for child in node["nodes"])
+        before = after - gap(workspace, axis)
+        was = {"rect": {axis: span(master, axis) / after * (before - rect[axis])}, "deco_rect": {"height": 0}}
+        self.share(workspace["name"], node["layout"], was, node["rect"][axis], len(node["nodes"]) + 1, exact=True)
 
     def farewell(self, node):
         name = self.where.get(node["id"])
@@ -1079,14 +1124,14 @@ class Daemon:
         if master == node["id"] and master in built[1] and workspace is not None:
             self.share(name, built[0], node, workspace["rect"]["width" if built[0] == "splith" else "height"], len(built[1]))
 
-    def measure_all(self, tree):
+    def measure_all(self, tree, exact=False):
         for workspace in workspaces(tree):
             name = workspace["name"]
             if self.tiling(name) is None or covered(workspace):
                 continue
             ids = self.ordered(tiled(workspace))
             if ids and trimmed(shape(workspace)) == self.target(name, ids):
-                self.measure(workspace, ids)
+                self.measure(workspace, ids, exact=exact)
 
     def remeasure(self, tree):
         """Read the masters' sizes again, where no event says they changed,
@@ -1117,7 +1162,7 @@ class Daemon:
             return [command]
         if not settled:
             middle = len(target[1]) == 3 and target[1][1] == ids[0]
-            return balancing(workspace, ids[0], leaves(target[1][0])[0], *size) if middle else [command]
+            return balancing(workspace, ids[0], (leaves(target[1][0])[0], leaves(target[1][2])[0]), *size) if middle else [command]
         if even := evening(workspace, ids[0], size[0]):
             return [even, command]
         node = top(workspace)
@@ -1126,6 +1171,22 @@ class Daemon:
             # Already its size: a message would only make sway go round again.
             return []
         return [command]
+
+    def taker(self, name, ids, con, rect, room):
+        """The window that takes the place of `con`, at `rect` on a workspace
+        at `room`, as it goes: the one the layout without it puts most over
+        where it was, which is under the mouse that focused `con`. In
+        centered the next window in the order is in the other column."""
+        rest = [other for other in ids if other != con]
+        if con not in ids or not rest:
+            return None
+        target = self.target(name, rest)
+        size = self.sizing(name, target, rest)
+        places = areas(target, rest[0], size[1] / 100 if size else None)
+        was = ((rect["x"] - room["x"]) / room["width"], (rect["y"] - room["y"]) / room["height"],
+               rect["width"] / room["width"], rect["height"] / room["height"])
+        nearest = heir(ids, con)
+        return max(rest, key=lambda other: (round(overlap(places.get(other, (0, 0, 0, 0)), was), 4), other == nearest))
 
     def entry(self, ws, coming, master, axis):
         """The size in px the next window takes first as it comes in at the side
@@ -1364,19 +1425,18 @@ class Daemon:
             # In place already, by the tile rule: a new window may still have
             # taken room from the master, and one that closed beside it left
             # its room to the master.
-            sized = self.resize(name, target, ids, workspace, settled=True) if new in ids or self.regrouped(name, target) else []
+            sized = self.resize(name, target, ids, workspace, settled=True) if new in ids or self.regrouped(workspace) else []
             self.sway.command(*sized)
             return bool(sized)
         self.sway.command(*(assemble(workspace, target, focused) or []), *self.resize(name, target, ids, workspace))
         return True
 
-    def regrouped(self, name, target):
-        """Whether the windows beside the master are fewer than when the
-        daemon last built the workspace: one closed, and sway gave its room
+    def regrouped(self, workspace):
+        """Whether the workspace holds fewer containers beside the master than
+        when the daemon last built it: a window closed, and sway gave its room
         to the others, the master too."""
-        seen = self.built.get(name)
-        return (not isinstance(seen, int) and seen is not None and not isinstance(target, int)
-                and len(target[1]) < len(seen[1]))
+        seen = self.built.get(workspace["name"])
+        return not isinstance(seen, int) and seen is not None and len(top(workspace)["nodes"]) < len(seen[1])
 
     def arrange(self, new=None, moved=False):
         tree = self.sway.tree()
@@ -1399,6 +1459,7 @@ class Daemon:
             if not covered(workspace) and self.tiling(workspace["name"]) is not None and (ids := self.ordered(tiles[workspace["id"]])):
                 self.inspect(workspace, ids, arrived)
         heir, self.heir = self.heir, None
+        gone, self.gone = self.gone, {}
         heir = heir if heir in present else None
         focused, onscreen, shaped = heir or focused_node(tree)["id"], visible(tree), False
         for workspace in workspaces(tree):
@@ -1412,10 +1473,19 @@ class Daemon:
                 tree_shape = shape(workspace)
                 # The tile rule gave the master its saved size as the new
                 # window came in: the sizes tell nothing.
-                resized = (new in ids and self.resizing.get(name)) or self.regrouped(name, self.target(name, ids))
-                if ids and not resized and (trimmed(tree_shape) == self.target(name, ids)
+                regrouped = self.regrouped(workspace)
+                if regrouped and name in gone:
+                    self.measure_gone(workspace, ids, gone[name])
+                resized = (new in ids and self.resizing.get(name)) or regrouped
+                # A window that closed beside the master left the others as
+                # they were built.
+                seen = self.built.get(name)
+                left = (name in gone and not isinstance(seen, int) and seen is not None and ids[0] in seen[1]
+                        and trimmed(tree_shape) == trimmed(without(seen, new)))
+                if ids and not resized and (trimmed(tree_shape) == self.target(name, ids) or left
                                             or trimmed(without(tree_shape, new)) == self.built.get(name)):
-                    self.measure(workspace, ids, new)
+                    # Read as it is when a window closed: the user is not dragging now.
+                    self.measure(workspace, ids, new, exact=name in gone)
                 shaped = self.shape_up(workspace, ids, new, focused) or shaped
         tree = self.sway.tree() if shaped else tree
         if heir is not None and focused_node(tree)["id"] != heir:
@@ -1559,9 +1629,12 @@ class Daemon:
         places in the same step, and it is closed from there, the focus going
         to the window that takes its place. A window still there a moment
         later asks first or will not close, and comes back."""
-        node, source = focused_window(self.sway.tree())
+        tree = self.sway.tree()
+        node, source = focused_window(tree)
         if source is None or node["nodes"] or node["type"] != "con" or self.tiling(source["name"]) is None:
             return self.sway.command("kill")
+        # A size set by the mouse sends no event: read it as it is now.
+        self.measure_all(tree, exact=True)
         con, rest = node["id"], copied(source)
         take_out(rest, con)
         ids = [other for other in self.ordered(tiled(source)) if other != con]
@@ -1574,7 +1647,8 @@ class Daemon:
             # The close event hands the focus on.
             return self.sway.command("kill")
         self.sway.command(f"[con_id={con}] move scratchpad", *self.leaving(source, node),
-                          refocus(heir(self.ordered(tiled(source)), con)), f"[con_id={con}] kill")
+                          refocus(self.taker(source["name"], self.ordered(tiled(source)), con, node["rect"], source["rect"])),
+                          f"[con_id={con}] kill")
         threading.Timer(CLOSING, self.sway.tick, [f"{ACT} show {con}"]).start()
         return self.sync()
 
@@ -1743,11 +1817,15 @@ class Daemon:
             con = event["container"]["id"]
             if change == "close":
                 self.farewell(event["container"])
-                if event["container"].get("focused"):
+                name = self.where.get(con)
+                room = next((ws["rect"] for ws in workspaces(self.sway.tree()) if ws["name"] == name), None)
+                if self.tiling(name) is not None:
+                    self.gone[name] = event["container"]["rect"]
+                if event["container"].get("focused") and room is not None and self.tiling(name) is not None:
                     # sway focuses the window last focused near it; the one
                     # that takes its place is the one under the mouse.
-                    name = self.where.get(con)
-                    self.heir = heir([other for other in self.order if self.where.get(other) == name and other in self.tiled], con)
+                    ids = [other for other in self.order if self.where.get(other) == name and other in self.tiled]
+                    self.heir = self.taker(name, ids, con, event["container"]["rect"], room)
             if change == "floating" and event["container"]["type"] == "con" and self.chosen(self.where.get(con)) == "float":
                 self.kept[con] = self.where[con]
             elif change == "floating":

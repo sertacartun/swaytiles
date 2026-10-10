@@ -441,3 +441,24 @@ def test_a_master_in_the_middle_keeps_equal_sides_as_its_columns_are_rebuilt(ses
     assert even(), s.shape()
     s.close("w3")
     assert even(), s.shape()
+
+
+def test_a_close_keeps_the_master_size_set_last_even_unseen(session):
+    s = session("centered", config="gaps inner 5\nbindsym Mod4+F10 kill\n")
+    opened(s, 6)
+    s.focus("w2")
+    s.command("[title=^w1$] resize set width 68 ppt")
+    s.wait(lambda: False, 0.6)
+    # A step this small is not taken in passing, as a mouse that is still
+    # dragging may give it: a close reads it as it is.
+    s.command("[title=^w1$] resize set width 70 ppt")
+    s.focus("w2")
+    s.key("F10")
+    assert s.width("w1") == 0.7
+    s.command("[title=^w1$] resize set width 72 ppt")
+    s.close("w3")
+    assert s.width("w1") == 0.72
+    s.command("[title=^w1$] resize set width 74 ppt")
+    s.close("w5")
+    s.close("w4")
+    assert s.width("w1") == 0.74
