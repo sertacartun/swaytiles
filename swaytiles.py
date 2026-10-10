@@ -437,20 +437,6 @@ def flanks(workspace, master):
     return children[0], children[2]
 
 
-def evening(workspace, master, axis):
-    """The command that makes the sides of a master in the middle equal, if
-    they are not. sway spreads a resize over every sibling alike, so the
-    master's own resize keeps the sides as unequal as they were: the first
-    side takes the size that leaves both alike."""
-    sides = flanks(workspace, master)
-    if sides is None:
-        return None
-    first, last = (span(side, axis) for side in sides)
-    if abs(first - last) <= 2:
-        return None
-    return f"[con_id={tiled(sides[0])[0]}] resize set {axis} {round((first + 2 * last) / 3)} px"
-
-
 def gap(workspace, axis):
     """The gap sway leaves between the windows at the top of the workspace."""
     node = top(workspace)
@@ -460,16 +446,24 @@ def gap(workspace, axis):
     return max(0, (node["rect"][axis] - sum(span(child, axis) for child in children)) // (len(children) - 1))
 
 
-def balancing(workspace, master, sides, axis, share):
-    """The commands that give a master in the middle `share` ppt of the
-    workspace and its two `sides` the same room, whatever room they have now.
-    sway spreads each resize over every sibling alike, and refuses one that
-    would leave a sibling too small, so each round sets both sides and then
-    the master: that cuts the error to an eighth, and a side too small to give
-    room is first given some. After five rounds less than a pixel is left."""
+def sides_room(workspace, axis, share, lean):
+    """The room in px of the two sides of a master in the middle that takes
+    `share` ppt of the workspace, the first side taking `lean` of theirs."""
     room = workspace["rect"][axis]
-    rest = (room - 2 * gap(workspace, axis) - room * share // 100) // 2
-    return [*(f"[con_id={side}] resize set {axis} {rest} px" for side in sides),
+    rest = room - 2 * gap(workspace, axis) - room * share // 100
+    return round(rest * lean), rest - round(rest * lean)
+
+
+def balancing(workspace, master, sides, axis, share, lean=0.5):
+    """The commands that give a master in the middle `share` ppt of the
+    workspace and its two `sides` their room, the first `lean` of it, whatever
+    room they have now. sway spreads each resize over every sibling alike, and
+    refuses one that would leave a sibling too small, so each round sets both
+    sides and then the master: that cuts the error to an eighth, and a side
+    too small to give room is first given some. After five rounds less than
+    a pixel is left."""
+    rooms = sides_room(workspace, axis, share, lean)
+    return [*(f"[con_id={side}] resize set {axis} {size} px" for side, size in zip(sides, rooms, strict=True)),
             f"[con_id={master}] resize set {axis} {share} ppt"] * 5
 
 
@@ -1006,6 +1000,7 @@ class Daemon:
         self.areas = {}
         self.tiled = set()
         self.ratios = {}
+        self.leans = {}
         self.sized = {}
         self.roles = {}
         self.resizing = {}
@@ -1087,17 +1082,34 @@ class Daemon:
             axis = "width" if node["layout"] == "splith" else "height"
             room = node["rect"][axis] - sum(span(child, axis) for child in node["nodes"] if tiled(child) == [new])
             self.share(workspace["name"], node["layout"], master, room, len(others), exact)
+            if len(others) == 3 and others[1] is master:
+                first, last = (span(side, axis) for side in (others[0], others[2]))
+                self.tilt(workspace["name"], first / (first + last), exact)
 
     def share(self, name, layout, master, room, count, exact=False):
         """Keep the master's share. A share read in passing may be a step off,
         so it takes a change of two to replace the saved one; one read `exact`
         is taken as it is."""
         axis = "width" if layout == "splith" else "height"
-        ratio = round(span(master, axis) / room, 2)
+        ratio, saved = round(span(master, axis) / room, 2), self.ratios.get(name)
+        if saved is not None and abs(ratio - saved) < (0.01 if exact else 0.02):
+            # Still the saved share, though it may be an even split now.
+            return
         if abs(ratio - 1 / count) < 0.02:
             self.ratios.pop(name, None)
-        elif abs(ratio - self.ratios.get(name, 0)) >= (0.01 if exact else 0.02):
+        else:
             self.ratios[name] = ratio
+
+    def tilt(self, name, lean, exact=False):
+        """Keep how the two sides of a master in the middle share their room,
+        as the mouse left them dragging one edge of the master."""
+        lean = round(lean, 2)
+        if abs(lean - self.leans.get(name, 0.5)) < (0.01 if exact else 0.02):
+            return
+        if abs(lean - 0.5) < 0.02:
+            self.leans.pop(name, None)
+        else:
+            self.leans[name] = lean
 
     def measure_gone(self, workspace, ids, rect):
         """Read the master's share as it was before a window beside it closed,
@@ -1150,21 +1162,29 @@ class Daemon:
         return "width" if target[0] == "splith" else "height", round(ratio * 100)
 
     def resize(self, name, target, ids, workspace=None, settled=False):
-        """The commands that give the master its saved size. A master in the
-        middle gets sides of the same room: evened out at once where
-        `workspace` is `settled`, as sway has it now, else whatever room the
-        moves before have left them."""
+        """The commands that give the master its saved size, and the sides of
+        a master in the middle the room they had: from the room they have
+        where `workspace` is `settled`, as sway has it now, else whatever room
+        the moves before have left them."""
         size = self.sizing(name, target, ids)
         if not size:
             return []
         command = f"[con_id={ids[0]}] resize set {size[0]} {size[1]} ppt"
         if workspace is None:
             return [command]
+        lean = self.leans.get(name, 0.5)
         if not settled:
             middle = len(target[1]) == 3 and target[1][1] == ids[0]
-            return balancing(workspace, ids[0], (leaves(target[1][0])[0], leaves(target[1][2])[0]), *size) if middle else [command]
-        if even := evening(workspace, ids[0], size[0]):
-            return [even, command]
+            return balancing(workspace, ids[0], (leaves(target[1][0])[0], leaves(target[1][2])[0]), *size, lean) if middle else [command]
+        if (sides := flanks(workspace, ids[0])) is not None:
+            master = top(workspace)["nodes"][1]
+            wanted = (*sides_room(workspace, size[0], size[1], lean), workspace["rect"][size[0]] * size[1] // 100)
+            # Shares are kept to the percent: closer than that, the room is
+            # as the user left it.
+            close = max(2, workspace["rect"][size[0]] // 100)
+            if all(abs(span(node, size[0]) - room) <= close for node, room in zip((*sides, master), wanted, strict=True)):
+                return []
+            return balancing(workspace, ids[0], tuple(tiled(side)[0] for side in sides), *size, lean)
         node = top(workspace)
         master = next((child for child in node["nodes"] if child["id"] == ids[0]), None)
         if master is not None and abs(span(master, size[0]) / node["rect"][size[0]] - size[1] / 100) < 0.01:
@@ -1188,11 +1208,12 @@ class Daemon:
         nearest = heir(ids, con)
         return max(rest, key=lambda other: (round(overlap(places.get(other, (0, 0, 0, 0)), was), 4), other == nearest))
 
-    def entry(self, ws, coming, master, axis):
+    def entry(self, name, ws, coming, master, axis, share):
         """The size in px the next window takes first as it comes in at the side
         of a master in the middle, as the third window of centered does: it
         gets a third of the room and the others give up theirs in proportion,
-        so the sides would stay unequal through the master's own resize."""
+        and the master's own resize keeps the difference between the sides,
+        so this one sets that difference to what their saved lean wants."""
         node = top(ws)
         children = coming[1]
         if len(children) != 3 or children[1] != master or [NEXT] not in (leaves(children[0]), leaves(children[2])) or len(node["nodes"]) != 2:
@@ -1203,7 +1224,14 @@ class Daemon:
             return 0
         # One gap more between three than between two.
         room = 2 * present - node["rect"][axis]
-        return round((4 * span(other, axis) / present + 1) / 9 * room)
+        if room <= 0:
+            return 0
+        lean = self.leans.get(name, 0.5)
+        lean = lean if leaves(children[0]) == [NEXT] else 1 - lean
+        # In parts of the room: the new window has a third, the other side two
+        # thirds of what it had; the master ends at `taken`.
+        other, taken = 2 / 3 * span(other, axis) / present, node["rect"][axis] * share // 100 / room
+        return round(((2 * lean - 1) * (1 - taken) + other + 1 / 6) / 1.5 * room)
 
     def insist(self, command):
         for delay in (0.3, 1.0):
@@ -1305,7 +1333,7 @@ class Daemon:
         widening = not isinstance(coming, int) and len(coming[1]) > level
         size = self.sizing(name, coming, [*ids, NEXT]) if widening else None
         self.resizing[name] = bool(size)
-        entry = self.entry(ws, coming, ids[0], size[0]) if size else 0
+        entry = self.entry(name, ws, coming, ids[0], *size) if size else 0
         if size and self.sized.get(name, (None, None))[0] != size:
             commands += [f"set $layout_axis_{code} {size[0]}", f"set $layout_share_{code} {size[1]}"]
         if entry != self.sized.get(name, (None, 0))[1]:

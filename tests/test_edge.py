@@ -462,3 +462,32 @@ def test_a_close_keeps_the_master_size_set_last_even_unseen(session):
     s.close("w5")
     s.close("w4")
     assert s.width("w1") == 0.74
+
+
+def test_a_master_in_the_middle_keeps_its_place_as_windows_come_and_go(session):
+    s = session("centered", config="gaps inner 5\n")
+    opened(s, 3)
+    s.focus("w2")
+    # As a mouse dragging the master's left edge leaves it: a narrow left side.
+    s.command("[title=^w3$] resize set width 15 ppt")
+    s.wait(lambda: False, 0.6)
+
+    def place():
+        room = s.workspace()["rect"]["width"]
+        return [node["rect"]["width"] / room for node in s.workspace()["nodes"]]
+
+    def kept():
+        now = place()
+        return len(now) == 3 and all(abs(width - was) <= 0.01 for width, was in zip(now, before, strict=True))
+    before = place()
+    assert before[0] < before[2] - 0.05
+    s.open("w4")
+    assert kept(), place()
+    s.open("w5")
+    s.close("w2")
+    assert kept(), place()
+    # Down to two, where the master's share is an even split, and back.
+    s.close("w5")
+    s.close("w4")
+    s.open("w6")
+    assert kept(), place()
