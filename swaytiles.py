@@ -755,6 +755,135 @@ def squash(node):
             index += 1
 
 
+def swap(root, first, second):
+    """`swap container` of two nodes: each takes the other's place, and with
+    it the size sway keeps for that place."""
+    one, other = ancestors(root, first), ancestors(root, second)
+    at, to = position(one[-2], one[-1]), position(other[-2], other[-1])
+    one[-2]["nodes"][at], other[-2]["nodes"][to] = other[-1], one[-1]
+
+
+def reconcile(workspace, target):
+    """The commands that make the model `workspace` into `target` and keep
+    its containers, and so the sizes sway keeps for them: a container left
+    holding a single container gives way to it, containers turn to the
+    layouts of the target, siblings change places, windows go over to a
+    sibling container that has too few, and the windows are swapped into
+    their places. None where it takes more than that, such as a container
+    sway would have to make or the workspace's own layout to turn."""
+    if isinstance(target, int) or target[0] in TABBED or workspace["layout"] != target[0]:
+        return None
+    commands = []
+    if len(workspace["nodes"]) == 1 and workspace["nodes"][0]["nodes"]:
+        # The master went and left the rest in the stack's container: a window
+        # moves out of it to the master's side.
+        side = next((index for index in (0, -1) if isinstance(target[1][index], int)), None)
+        if side is None:
+            return None
+        con = leaves(shape(workspace))[side]
+        way = ("left" if side == 0 else "right") if family(target[0]) == "h" else ("up" if side == 0 else "down")
+        if move(workspace, con, way) != "out":
+            return None
+        commands.append(f"[con_id={con}] move {way}")
+
+    def unwrap(parent, index):
+        child = parent["nodes"][index]["nodes"][0]
+        commands.append(f"[con_id={child['id']}] split none")
+        parent["nodes"][index] = child
+        return child
+
+    def align(parent, index, want):
+        node = parent["nodes"][index]
+        if isinstance(want, int):
+            while len(node["nodes"]) == 1:
+                node = unwrap(parent, index)
+            return not node["nodes"]
+        if not node["nodes"]:
+            return False
+        while len(node["nodes"]) == 1 and node["nodes"][0]["nodes"] and len(want[1]) > 1:
+            node = unwrap(parent, index)
+        if node["layout"] != want[0]:
+            if node["layout"] in TABBED or want[0] in TABBED:
+                return False
+            # `layout` on a child turns the container it is in; on the only
+            # child it would turn the one around that, where `split` turns it.
+            turn = f"split {family(want[0])}" if len(node["nodes"]) == 1 else layout_command(want[0])
+            commands.append(f"[con_id={node['nodes'][0]['id']}] {turn}")
+            node["layout"] = want[0]
+        return arrange(node, want[1])
+
+    def arrange(node, wanted):
+        nodes = node["nodes"]
+        # Columns and rows of windows hand windows over to those with too few,
+        # and those left over give theirs away, so sway lets them go.
+        lines = [child for child in nodes if child["nodes"] and all(not leaf["nodes"] for leaf in child["nodes"])]
+        if len(nodes) > len(wanted) and len(lines) == len(nodes) and all(
+                not isinstance(want, int) and all(isinstance(leaf, int) for leaf in want[1]) for want in wanted):
+            short = [len(want[1]) for want in wanted] + [0] * (len(nodes) - len(wanted))
+            short = [need - len(child["nodes"]) for need, child in zip(short, nodes, strict=True)]
+            for index in range(len(nodes)):
+                while short[index] > 0:
+                    giver = next((other for other in range(len(nodes)) if short[other] < 0), None)
+                    if giver is None:
+                        return False
+                    leaf, anchor = nodes[giver]["nodes"].pop(), nodes[index]["nodes"][-1]
+                    commands.extend(after(anchor["id"], leaf["id"]))
+                    nodes[index]["nodes"].append(leaf)
+                    short[index], short[giver] = short[index] - 1, short[giver] + 1
+            nodes[:] = [child for child in nodes if child["nodes"]]
+        if len(nodes) != len(wanted):
+            return False
+        for index, want in enumerate(wanted):
+            if (not nodes[index]["nodes"]) == isinstance(want, int):
+                continue
+            # Siblings change places where a window stands for a container,
+            other = next((later for later in range(index + 1, len(nodes))
+                          if (not nodes[later]["nodes"]) == isinstance(want, int)), None)
+            if other is not None:
+                commands.append(f"[con_id={nodes[index]['id']}] swap container with con_id {nodes[other]['id']}")
+                nodes[index], nodes[other] = nodes[other], nodes[index]
+            elif isinstance(want, int) and len(nodes[index]["nodes"]) == 1 and not nodes[index]["nodes"][0]["nodes"]:
+                # a window alone in a container gives it up where a window goes,
+                unwrap(node, index)
+            elif not isinstance(want, int) and len(want[1]) == 1 and want[0] not in TABBED:
+                # and a window takes one where a container of it alone goes:
+                # sway makes it the window's size.
+                commands.append(f"[con_id={nodes[index]['id']}] split {family(want[0])}")
+                nodes[index] = container(want[0], [nodes[index]])
+            else:
+                return False
+        # Columns and rows of windows hand windows over to those with too few.
+        flat = [index for index, want in enumerate(wanted) if not isinstance(want, int) and all(isinstance(leaf, int) for leaf in want[1])
+                and all(not child["nodes"] for child in nodes[index]["nodes"])]
+        short = {index: len(wanted[index][1]) - len(nodes[index]["nodes"]) for index in flat}
+        for index in flat:
+            while short[index] > 0:
+                giver = next((other for other in flat if short[other] < 0), None)
+                if giver is None:
+                    return False
+                leaf, anchor = nodes[giver]["nodes"][-1], nodes[index]["nodes"][-1]
+                commands.extend(after(anchor["id"], leaf["id"]))
+                nodes[giver]["nodes"].pop()
+                nodes[index]["nodes"].append(leaf)
+                short[index], short[giver] = short[index] - 1, short[giver] + 1
+        return all(align(node, index, want) for index, want in enumerate(wanted))
+
+    if not arrange(workspace, target[1]):
+        return None
+    now, want = leaves(shape(workspace)), leaves(target)
+    if sorted(now) != sorted(want):
+        return None
+    for index, con in enumerate(want):
+        if now[index] != con:
+            other = now[index]
+            commands.append(f"[con_id={con}] swap container with con_id {other}")
+            swap(workspace, con, other)
+            now[now.index(con)], now[index] = other, con
+    # A container made just now has no id to name it by.
+    named = all(not re.search(r"con_id=-", command) for command in commands)
+    return commands if named and trimmed(shape(workspace)) == target and not wrapped(workspace) else None
+
+
 def foresee(workspace, target):
     """How the tile rule should place the next window, NEXT in `target`, so
     that sway draws it in its place from the first frame: the window it goes
@@ -1456,6 +1585,15 @@ class Daemon:
             sized = self.resize(name, target, ids, workspace, settled=True) if new in ids or self.regrouped(workspace) else []
             self.sway.command(*sized)
             return bool(sized)
+        model = copied(workspace)
+        steps = reconcile(model, target)
+        if steps is not None:
+            # The containers stay, and the sizes sway keeps for them: only the
+            # master's own share is set again, where the places beside it changed.
+            moved = {child["id"] for child in top(model)["nodes"]} != {child["id"] for child in top(workspace)["nodes"]}
+            sized = self.resize(name, target, ids, workspace) if moved or self.regrouped(workspace) else []
+            self.sway.command(*steps, *([refocus(focused)] if focused in ids and steps else []), *sized)
+            return bool(steps or sized)
         self.sway.command(*(assemble(workspace, target, focused) or []), *self.resize(name, target, ids, workspace))
         return True
 
@@ -1557,7 +1695,7 @@ class Daemon:
         if destination is None or destination["id"] == source["id"]:
             return self.sway.command(f"[con_id={con}] {native}")
         name = destination["name"]
-        away = self.leaving(source, node)
+        before, away = self.leaving(source, node)
         steps = self.entering(destination, con, direction)
         self.carried = (con, name)
         command = native if target else f"move container to workspace {quoted(name)}, focus"
@@ -1566,11 +1704,11 @@ class Daemon:
         if floats and name in visible(tree):
             geometry, rule = self.cascading(destination)
             self.where[con] = name
-            self.sway.command(f"[con_id={con}] floating enable, mark --add {FLOATED}{con}, resize set {geometry[0]} px {geometry[1]} px, "
+            self.sway.command(*before, f"[con_id={con}] floating enable, mark --add {FLOATED}{con}, resize set {geometry[0]} px {geometry[1]} px, "
                               f"{command}, move absolute position {geometry[2]} px {geometry[3]} px", *away, *rule)
             self.insist(f"[con_id={con}] {placement(*geometry)}")
         elif steps and (node["type"] == "con" or unfloat):
-            self.sway.command(*unfloat, *steps, *away, *([f"[con_id={con}] focus"] if direction else []))
+            self.sway.command(*before, *unfloat, *steps, *away, *([f"[con_id={con}] focus"] if direction else []))
             self.record(self.sway.tree())
         elif unfloat:
             self.sway.command(f"{unfloat[0]}, {command}")
@@ -1578,7 +1716,7 @@ class Daemon:
             # Into a workspace with no layout, no windows or a fullscreen one:
             # sway's own moves, which enter at the near edge, where `move
             # container to workspace` would put it next to the focused window.
-            self.sway.command(f"[con_id={con}] " + (", ".join([native] * count) if count else command), *away)
+            self.sway.command(*before, f"[con_id={con}] " + (", ".join([native] * count) if count else command), *away)
 
     def entering(self, workspace, con, heading=None):
         """The commands that take `con` from wherever it is to its place in
@@ -1618,18 +1756,37 @@ class Daemon:
         return after(ids[-1], con) + settling(workspace, target, con, ids[-1]) + self.resize(name, target, order, workspace)
 
     def leaving(self, workspace, node):
-        """The commands that put the other windows of `workspace` back in its
-        layout once `node` has left it, to send with the command that takes
-        it away, so sway never draws the hole it leaves."""
+        """The commands to send before and after the one that takes `node`
+        away from `workspace`, so the others are in the layout as it goes and
+        sway never draws the hole it leaves. Where sway's own going leaves the
+        layout as it was, that is all. Else the window is first swapped down,
+        place by place, to the place the layout gives up, so every other place
+        keeps the size sway keeps for it, and what is left is put in order
+        after: the others move up a place, as when the window in the last
+        place goes in plain sway."""
         name, con = workspace["name"], node["id"]
-        ids = [other for other in self.ordered(tiled(workspace)) if other != con]
+        order = self.ordered(tiled(workspace))
+        ids = [other for other in order if other != con]
         if node["type"] != "con" or self.tiling(name) is None or not ids or covered(workspace):
-            return []
+            return [], []
         self.farewell(node)
         rest, target = copied(workspace), self.target(name, ids)
         take_out(rest, con)
-        steps = [] if trimmed(shape(rest)) == target and not wrapped(rest) else assemble(rest, target) or []
-        return steps + self.resize(name, target, ids, workspace)
+
+        def sized(model):
+            # sway gives the room of a container beside the master to the master too.
+            return self.resize(name, target, ids, workspace) if len(top(model)["nodes"]) < len(top(workspace)["nodes"]) else []
+        if trimmed(shape(rest)) == target and not wrapped(rest):
+            return [], sized(rest)
+        model, before = copied(workspace), []
+        for other in order[order.index(con) + 1:]:
+            swap(model, con, other)
+            before.append(f"[con_id={con}] swap container with con_id {other}")
+        take_out(model, con)
+        steps = reconcile(model, target)
+        if steps is None:
+            return [], (assemble(rest, target) or []) + self.resize(name, target, ids, workspace)
+        return before, steps + sized(model)
 
     def switch(self, mode):
         """`floating toggle`, `enable` or `disable` of the focused window, or
@@ -1647,7 +1804,8 @@ class Daemon:
         if joins:
             self.sway.command(f"[con_id={con}] floating disable", *self.entering(source, con))
         else:
-            self.sway.command(f"[con_id={con}] {'floating enable' if mode != 'scratchpad' else native}", *self.leaving(source, node))
+            before, after = self.leaving(source, node)
+            self.sway.command(*before, f"[con_id={con}] {'floating enable' if mode != 'scratchpad' else native}", *after)
         return self.sync()
 
     def close(self):
@@ -1674,7 +1832,8 @@ class Daemon:
         if trimmed(shape(rest)) == target and not regrouped:
             # The close event hands the focus on.
             return self.sway.command("kill")
-        self.sway.command(f"[con_id={con}] move scratchpad", *self.leaving(source, node),
+        before, after = self.leaving(source, node)
+        self.sway.command(*before, f"[con_id={con}] move scratchpad", *after,
                           refocus(self.taker(source["name"], self.ordered(tiled(source)), con, node["rect"], source["rect"])),
                           f"[con_id={con}] kill")
         threading.Timer(CLOSING, self.sway.tick, [f"{ACT} show {con}"]).start()

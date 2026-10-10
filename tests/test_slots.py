@@ -1,0 +1,113 @@
+"""Sizes are sway's own: a layout keeps the containers sway sizes and moves
+only windows between them, so what a user sized stays as in plain sway.
+
+Each test builds the same workspace twice, sizes it the same way, and lets a
+plain sway, with the daemon stopped, show what the sizes should be."""
+
+import pytest
+
+CONFIG = "gaps inner 5\nbindsym Mod4+F10 kill\n"
+
+# A layout, its windows, how they are sized by hand, and the window to close.
+SIZED = {
+    "dwindle": (5, ["[title=^w1$] resize set width 65 ppt", "[title=^w3$] resize set width 40 ppt"], "w2"),
+    "spiral": (6, ["[title=^w1$] resize set width 60 ppt", "[title=^w2$] resize set height 35 ppt"], "w3"),
+    "centered": (7, ["[title=^w3$] resize set width 15 ppt", "[title=^w1$] resize set width 55 ppt",
+                     "[title=^w2$] resize set height 20 ppt"], "w2"),
+    "master": (5, ["[title=^w1$] resize set width 70 ppt", "[title=^w3$] resize set height 40 ppt"], "w1"),
+    "wide": (4, ["[title=^w1$] resize set height 60 ppt", "[title=^w2$] resize set width 45 ppt"], "w1"),
+    "grid": (6, ["[title=^w1$] resize set width 45 ppt", "[title=^w5$] resize set height 40 ppt"], "w2"),
+}
+
+
+def built(session, layout, count, sizes):
+    s = session(layout, config=CONFIG)
+    for index in range(1, count + 1):
+        s.open(f"w{index}")
+    for command in sizes:
+        s.command(command)
+    # Read by the daemon as a mouse would leave them, after a focus change.
+    s.focus("w1")
+    s.wait(lambda: False, 0.6)
+    return s
+
+
+def plain(session, layout, count, sizes):
+    s = built(session, layout, count, sizes)
+    s.stop_daemon()
+    s.releasing = True
+    return s
+
+
+def rects(s, *titles):
+    """The places of the windows, by title, or all of them as a sorted list."""
+    found = {}
+    stack = [s.workspace()]
+    while stack:
+        node = stack.pop()
+        if not node["nodes"] and node["type"] == "con":
+            found[node["name"]] = tuple(node["rect"][key] for key in ("x", "y", "width", "height"))
+        stack += node["nodes"]
+    return {title: found[title] for title in titles} if titles else sorted(found.values())
+
+
+@pytest.mark.parametrize("layout", SIZED)
+def test_closing_by_key_keeps_every_size_as_sway_does(session, layout):
+    # The window closes from the middle and the others move up a place: each
+    # place keeps its size, and the last one's room goes to its neighbours,
+    # as when the window in the last place closes in plain sway.
+    count, sizes, victim = SIZED[layout]
+    s, oracle = built(session, layout, count, sizes), plain(session, layout, count, sizes)
+    oracle.close(f"w{count}")
+    s.focus(victim)
+    drawn = s.drawn(lambda: s.key("F10"))
+    assert len(drawn) == 1, drawn
+    assert rects(s) == rects(oracle)
+
+
+def test_closing_by_key_where_sway_keeps_the_layout_is_sways_own_close(session):
+    # A stack window closing leaves the layout as it was: nothing to do but
+    # what sway does, its room going to the windows beside it.
+    count, sizes = 5, ["[title=^w1$] resize set width 70 ppt", "[title=^w3$] resize set height 40 ppt"]
+    s, oracle = built(session, "master", count, sizes), plain(session, "master", count, sizes)
+    oracle.close("w3")
+    s.focus("w3")
+    s.key("F10")
+    assert rects(s) == rects(oracle)
+
+
+@pytest.mark.parametrize(("layout", "victim", "kept"), [
+    ("dwindle", "w3", ("w1", "w2")),
+    ("spiral", "w4", ("w1", "w2", "w3")),
+    ("centered", "w4", ("w1",)),
+    ("master", "w3", ("w1",)),
+])
+def test_a_window_closing_by_itself_leaves_the_places_before_it_alone(session, layout, victim, kept):
+    count, sizes, _ = SIZED[layout]
+    s = built(session, layout, count, sizes)
+    before = rects(s, *kept)
+    s.close(victim)
+    assert rects(s, *kept) == before
+
+
+def test_a_window_closing_by_itself_in_centered_keeps_the_columns(session):
+    count, sizes, _ = SIZED["centered"]
+    s = built(session, "centered", count, sizes)
+    widths = [node["rect"]["width"] for node in s.workspace()["nodes"]]
+    s.close("w2")
+    assert [node["rect"]["width"] for node in s.workspace()["nodes"]] == widths
+
+
+@pytest.mark.parametrize(("layout", "kept"), [
+    ("dwindle", ("w1", "w2", "w3", "w4")),
+    ("centered", ("w1", "w3", "w5", "w7")),
+    ("master", ("w1",)),
+    ("wide", ("w1",)),
+])
+def test_a_new_window_takes_room_only_beside_it(session, layout, kept):
+    count, sizes, _ = SIZED[layout]
+    s = built(session, layout, count, sizes)
+    before = rects(s, *kept)
+    s.open("new")
+    assert rects(s, *kept) == before
+
