@@ -108,3 +108,22 @@ def test_a_new_window_is_drawn_in_its_place_from_the_first_frame(session, layout
         # A grid deals its rows out again from 4 windows to 5: the daemon rebuilds it.
         assert frame() == first or (layout, count) == ("grid", 5), f"w{count}: {drawn}"
         assert s.shape() == expected(layout, count)
+
+
+@pytest.mark.parametrize("layout", TILING)
+def test_a_window_opening_on_a_workspace_emptied_is_drawn_on_its_own(session, layout):
+    # The rule was set for a second window next to the first; with the first
+    # gone it must not wrap the new one in a container, with a tab bar in a
+    # stack of tabs.
+    s = session(layout)
+    s.open("w1")
+    s.close("w1")
+    os.kill(s.daemon.pid, signal.SIGSTOP)
+    try:
+        s.open("w2", settle=False)
+        s.wait(lambda: False, 0.2)
+        first = s.shape(exact=True)
+    finally:
+        os.kill(s.daemon.pid, signal.SIGCONT)
+    # Right under the workspace; which way the workspace splits shows nothing.
+    assert first in ("H[w2]", "V[w2]")

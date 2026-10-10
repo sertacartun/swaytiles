@@ -1444,8 +1444,21 @@ class Daemon:
             self.resizing[name] = False
             if active and ids:
                 commands += self.prepare(ws, name, ids, wanted)
+            elif active:
+                # Emptied, the workspace takes its next window as sway places it.
+                commands += self.step(name)
         commands += [f"unmark {mark}" for mark in held if mark not in wanted]
         return commands + [f"[con_id={con}] mark --add {mark}" for mark, con in wanted.items() if held.get(mark) != con]
+
+    def step(self, name, way=None, nest=None):
+        """The commands that set the step the tile rule takes for the next window of `name`, if it changed."""
+        code = encoded(name)
+        role = "both" if way and nest else "turn" if way else "nest" if nest else "none"
+        values = (f"_layout_{role}_{code}", way or "right", layout_command(nest)[7:] if nest else "splith")
+        if self.roles.get(name) == values:
+            return []
+        self.roles[name] = values
+        return [f"set ${key}_{code} {value}" for key, value in zip(("layout_role", "layout_way", "layout_inner"), values, strict=True)]
 
     def prepare(self, ws, name, ids, wanted):
         """The commands that set the tile rule of the workspace for its next
@@ -1459,11 +1472,7 @@ class Daemon:
             ws = {**ws, "layout": coming[0]}
         anchor, way, nest = (self.plan(ws, name, coming) if not covered(ws) else None) or (ids[-1], None, None)
         wanted[AFTER + code] = anchor
-        role = "both" if way and nest else "turn" if way else "nest" if nest else "none"
-        values = (f"_layout_{role}_{code}", way or "right", layout_command(nest)[7:] if nest else "splith")
-        if self.roles.get(name) != values:
-            commands += [f"set ${key}_{code} {value}" for key, value in zip(("layout_role", "layout_way", "layout_inner"), values, strict=True)]
-            self.roles[name] = values
+        commands += self.step(name, way, nest)
         # A window coming in at the master's level takes room from it: the
         # rule gives the master its saved size at once.
         level = 1 if isinstance(now, int) or now[0] in TABBED else len(now[1])
