@@ -360,6 +360,18 @@ def parent_of(node, con):
     return next((parent for child in node[1] if (parent := parent_of(child, con))), None)
 
 
+def lineage(node, leaf):
+    """The containers of the layout `node` that hold `leaf`, outermost first."""
+    if isinstance(node, int):
+        return []
+    for child in node[1]:
+        if child == leaf:
+            return [node]
+        if inner := lineage(child, leaf):
+            return [node, *inner]
+    return []
+
+
 def leaves(node):
     return [node] if isinstance(node, int) else [leaf for child in node[1] for leaf in leaves(child)]
 
@@ -1016,6 +1028,39 @@ def neighbour(tree, workspace, direction):
 
     found = min((output for output in outputs(tree) if beyond(output["rect"])), key=lambda output: distance(output["rect"]), default=None)
     return next((ws for ws in found["nodes"] if ws["name"] == found.get("current_workspace")), None) if found else None
+
+
+def doorway(workspace, con, direction):
+    """The commands that put `con` where sway's own `move <direction>` puts a
+    window coming into `workspace` from another output, without the moves
+    that would reshape the workspace it leaves. sway goes down from the
+    workspace: a split along the move takes it at the near end, a split
+    across it hands it on to its last focused child, and a window there
+    takes it beside itself, before it on a move right or down. A near end is
+    reached from the window at that end: the new window goes after it and is
+    moved back to the edge it came through. None where the model cannot
+    follow."""
+    node, first = workspace, direction in ("right", "down")
+    back = {"right": "left", "left": "right", "down": "up", "up": "down"}[direction]
+    while node["nodes"] and family(node["layout"]) != family(SPLITS[direction]):
+        parent, node = node, next((child for id in node["focus"] for child in node["nodes"] if child["id"] == id), node["nodes"][0])
+        if not node["nodes"]:
+            way = {"h": "left", "v": "up"}[family(parent["layout"])]
+            return after(node["id"], con) + ([f"[con_id={con}] move {way}"] if first else [])
+    if not node["nodes"]:
+        return None
+    end, model = node, copied(workspace)
+    while end["nodes"]:
+        end = end["nodes"][0 if first else -1]
+    put_after(model, end["id"], con)
+    steps = after(end["id"], con)
+    while True:
+        parent = ancestors(model, con)[-2]
+        if parent["id"] == node["id"] and parent["nodes"][0 if first else -1]["id"] == con:
+            return steps
+        if move(model, con, back) not in ("swap", "out") or len(steps) > 20:
+            return None
+        steps.append(f"[con_id={con}] move {back}")
 
 
 def facing(node, direction):
@@ -1728,11 +1773,16 @@ class Daemon:
             self.record(self.sway.tree())
         elif unfloat:
             self.sway.command(f"{unfloat[0]}, {command}")
+        elif managed and direction and not covered(destination) and (entry := doorway(destination, con, direction)):
+            # Into a workspace with no layout, where sway's own moves would
+            # start from where `before` put the window, and reshape the
+            # workspace it leaves: in at sway's place for it, in one step.
+            self.sway.command(*before, *entry, *away, f"[con_id={con}] focus")
         else:
             # Into a workspace with no layout, no windows or a fullscreen one:
             # sway's own moves, which enter at the near edge, where `move
             # container to workspace` would put it next to the focused window.
-            self.sway.command(*before, f"[con_id={con}] " + (", ".join([native] * count) if count else command), *away)
+            self.sway.command(*before, f"[con_id={con}] " + (", ".join([native] * count) if count and not managed else command), *away)
 
     def entering(self, workspace, con, heading=None):
         """The commands that take `con` from wherever it is to its place in
@@ -1742,8 +1792,11 @@ class Daemon:
         edge, the nearest one beside the window there that shares the most
         of its branch with the workspace's last focused window, before it on
         a move right or down and after it on a move left or up; when none
-        shares a branch, and into tabs and stacked titles, the near end.
-        Otherwise it joins the end of the order."""
+        shares a branch, the near end. Tabs and stacked titles take it at
+        their near end where it comes in along them, and so do those that
+        fill the workspace on a move left or right; across them it goes
+        beside the selected one, as sway's own `move` puts it. Otherwise it
+        joins the end of the order."""
         name = workspace["name"]
         ids = [other for other in self.ordered(tiled(workspace)) if other != con]
         layout = self.tiling(name)
@@ -1753,7 +1806,13 @@ class Daemon:
             return normalize(layout([*ids[:place], con, *ids[place:]]))
         edge = [place for place in range(len(ids) + 1) if con in facing(built(place), heading)] if ids and heading and layout else []
         at = (min if near else max)(edge, default=len(ids))
-        if edge and parent_of(built(edge[0]), con)[0] not in TABBED:
+        along = heading and family(SPLITS[heading])
+        holders = lineage(built(edge[0]), con) if edge else []
+        # As sway: tabs or stacked titles take it at their near end where
+        # they or a split around them go along the move. Alone on the
+        # workspace they sit in a row.
+        outer = [holder[0] for holder in holders] + (["splith"] if holders and holders[0][0] in TABBED else [])
+        if edge and not (holders[-1][0] in TABBED and along in map(family, outer)):
             # Beside the window at the edge that is the focused one, or
             # shares the most of its branch; none shares any: the near end.
             now = normalize(layout(ids))
@@ -1762,6 +1821,8 @@ class Daemon:
             by = max(shared, key=lambda leaf: (shared[leaf], -ids.index(leaf) if near else ids.index(leaf)))
             if shared[by]:
                 want = ids.index(by) + (not near)
+                if (titles := parent_of(now, by))[0] in TABBED and family(titles[0]) == along:
+                    want = ids.index(leaves(titles)[0]) if near else ids.index(leaves(titles)[-1]) + 1
                 at = min(edge, key=lambda place: (abs(place - want), place if near else -place))
         self.order[:] = [other for other in self.order if other != con]
         self.order.insert(self.order.index(ids[at]) if at < len(ids) else len(self.order), con)

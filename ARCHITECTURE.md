@@ -336,15 +336,20 @@ layout:
    that is the focused one or shares the most of its branch (`path`),
    before it on a move right or down and after it on a move left or up,
    as sway's own `move` does where the tree lets it choose. When no
-   window at that edge shares any of it, and into tabs and stacked
-   titles, it takes the near end. Moving right into `master` makes it
+   window at that edge shares any of it, it takes the near end. Tabs
+   and stacked titles take it at their near end where they, or a split
+   around them, go along the move (a tabbed or stacked workspace sits in
+   a row), and beside the selected one across them, as sway does. Moving right into `master` makes it
    the master, the only place at that edge; into `wide` the master or
    the first of the stack, as the focus there is on the one or the
    other; into `grid` the start of the focused row; into the stack of
    `master-right` beside the focused window, or at its top. Into a
-   workspace with no layout the daemon sends sway's own `move`, as many
-   times as it takes to leave the workspace (`presses`), and sway puts
-   it. On a move to a workspace by name or number it joins the end of
+   workspace with no layout it goes where sway's own `move` would put
+   it (`doorway`, after container_move_to_workspace_from_direction):
+   sway's moves themselves would start from the place the window was
+   swapped to on its way out, and reshape the workspace it leaves. From
+   a workspace with no layout the daemon sends sway's own `move`, as
+   many times as it takes to leave the workspace (`presses`). On a move to a workspace by name or number it joins the end of
    the stack. A move in a direction takes the focus along, like sway's
    own. It is recorded as `carried` until the next look at the tree, so
    it does not keep a drop point.
