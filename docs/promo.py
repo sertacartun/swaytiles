@@ -1400,37 +1400,50 @@ def social_png(path):
     surface.write_to_png(str(path))
 
 
-HERO = [(0.0, 6.0), (8.0, 19.95)]
-HERO_SIZE, HERO_FPS = (1024, 576), 25
+HERO = [(0.0, 6.0), (10.0, 12.9), (14.0, 17.95)]
+HERO_SIZE, HERO_FPS, HERO_CROSS = (1600, 900), 25, 0.2
 
 
 def hero_frames(args):
-    numbers, times, folder = args
+    jobs, folder = args
     scene = build(brand=False)
     full = cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)
+    before = cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)
     small = cairo.ImageSurface(cairo.FORMAT_ARGB32, *HERO_SIZE)
-    for number, t in zip(numbers, times, strict=True):
+    for number, t, previous, amount in jobs:
         frame(scene, t, full)
         ctx = cairo.Context(small)
         ctx.scale(HERO_SIZE[0] / W, HERO_SIZE[1] / H)
+        if previous is not None:
+            frame(scene, previous, before)
+            ctx.set_source_surface(before)
+            ctx.get_source().set_filter(cairo.FILTER_GOOD)
+            ctx.paint()
         ctx.set_source_surface(full)
         ctx.get_source().set_filter(cairo.FILTER_GOOD)
-        ctx.paint()
+        ctx.paint_with_alpha(amount)
         small.write_to_png(str(folder / f"{number:05}.png"))
 
 
 def hero_webp(path):
-    """A silent loop of the promo without the logo, for the top of the README."""
+    """A silent loop of the promo without the logo, for the top of the
+    README: the hook, the menu and the montage, each cut crossfaded."""
     import tempfile
-    times = [start + i / HERO_FPS for start, end in HERO for i in range(int((end - start) * HERO_FPS))]
+    times = []
+    for index, (start, end) in enumerate(HERO):
+        for i in range(int((end - start) * HERO_FPS)):
+            age = i / HERO_FPS
+            fading = index > 0 and age < HERO_CROSS
+            previous = HERO[index - 1][1] + age if fading else None
+            times.append((start + age, previous, in_out_cubic(age / HERO_CROSS) if fading else 1.0))
+    jobs = [(number, *entry) for number, entry in enumerate(times)]
     workers = os.cpu_count() or 4
     with tempfile.TemporaryDirectory() as folder:
         folder = Path(folder)
-        jobs = [(list(range(i, len(times), workers)), times[i::workers], folder) for i in range(workers)]
         with Pool(workers) as pool:
-            pool.map(hero_frames, jobs)
+            pool.map(hero_frames, [(jobs[i::workers], folder) for i in range(workers)])
         subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-framerate", str(HERO_FPS), "-i", str(folder / "%05d.png"),
-                        "-c:v", "libwebp_anim", "-lossless", "0", "-q:v", "65", "-compression_level", "6",
+                        "-c:v", "libwebp_anim", "-lossless", "0", "-q:v", "78", "-compression_level", "6",
                         "-loop", "0", str(path)], check=True)
 
 
