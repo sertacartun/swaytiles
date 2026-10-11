@@ -54,8 +54,12 @@ tabs it reorders the tabs first. At the edge of the workspace it moves
 the window to the next output and the focus goes with it. There it
 comes in at the edge it crosses, beside the window you last focused on
 that workspace (or the one at that edge in the same column or row as
-it), otherwise at the near end, as in tabs and stacked titles. On a
-workspace without a layout it is sway's own `move`. `swaytiles move
+it), otherwise at the near end. Tabs and stacked titles take it at
+their near end when it comes along them (tabs from the left or right,
+stacked titles from above or below) or when they fill the workspace;
+across them it goes beside the selected one. This is where sway's own
+`move` would put it. On a workspace without a layout it is sway's own
+`move`, and a window coming into one goes where sway puts it. `swaytiles move
 number N` sends the window to a workspace, where it joins the stack or
 floats, as that workspace's layout says. `swaytiles swap` swaps the focused window with the
 master; on the master itself it swaps with the top of the stack. Sizes

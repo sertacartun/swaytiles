@@ -252,6 +252,47 @@ def test_a_window_carried_to_another_output_takes_its_place_at_the_edge(session,
     assert s.shape("1") == entered
 
 
+AROUND = ("output HEADLESS-1 resolution 1600x1000 position 1600 1000\n"
+          "output HEADLESS-2 resolution 1600x1000 position 0 1000\n"
+          "output HEADLESS-3 resolution 1600x1000 position 3200 1000\n"
+          "output HEADLESS-4 resolution 1600x1000 position 1600 0\n"
+          "output HEADLESS-5 resolution 1600x1000 position 1600 2000\n"
+          "workspace 1 output HEADLESS-1\nworkspace 2 output HEADLESS-2\nworkspace 3 output HEADLESS-3\n"
+          "workspace 4 output HEADLESS-4\nworkspace 5 output HEADLESS-5\n"
+          "bindsym Mod4+F1 nop layout move left\nbindsym Mod4+F2 nop layout move right\n"
+          "bindsym Mod4+F3 nop layout move up\nbindsym Mod4+F4 nop layout move down\n")
+SIDES = {"left": ("2", "F2"), "right": ("3", "F1"), "above": ("4", "F4"), "below": ("5", "F3")}
+
+
+@pytest.mark.parametrize("layout, focus, entered", [
+    ("tabbed", "c3", {"left": "T[X c1 c2 c3 c4]", "right": "T[c1 c2 c3 c4 X]",
+                      "above": "T[c1 c2 X c3 c4]", "below": "T[c1 c2 c3 X c4]"}),
+    ("stacking", "c3", {"left": "S[X c1 c2 c3 c4]", "right": "S[c1 c2 c3 c4 X]",
+                        "above": "S[X c1 c2 c3 c4]", "below": "S[c1 c2 c3 c4 X]"}),
+    ("tabbed-master", "c3", {"left": "H[X T[c1 c2 c3 c4]]", "right": "H[c1 T[c2 c3 c4 X]]",
+                             "above": "H[c1 T[c2 X c3 c4]]", "below": "H[c1 T[c2 c3 X c4]]"}),
+    ("stacked-master", "c3", {"left": "H[X S[c1 c2 c3 c4]]", "right": "H[c1 S[c2 c3 c4 X]]",
+                              "above": "H[c1 S[X c2 c3 c4]]", "below": "H[c1 S[c2 c3 c4 X]]"}),
+    ("stacked-master", "c1", {"left": "H[X S[c1 c2 c3 c4]]", "right": "H[c1 S[c2 c3 c4 X]]",
+                              "above": "H[X S[c1 c2 c3 c4]]", "below": "H[c1 S[X c2 c3 c4]]"}),
+])
+def test_tabs_and_stacked_titles_take_a_window_where_sway_would(session, layout, focus, entered):
+    """sway takes it at the near end of titles it comes along, or of a row
+    around them, and beside the selected one across them."""
+    found = {}
+    for side, (source, key) in SIDES.items():
+        s = session("master", workspaces={"1": layout, source: "default"}, config=AROUND, outputs=5)
+        s.command("workspace 1")
+        for title in ("c1", "c2", "c3", "c4"):
+            s.open(title)
+        s.focus(focus)
+        s.command(f"workspace {source}")
+        s.open("X")
+        s.key(key)
+        found[side] = s.shape("1")
+    assert found == entered
+
+
 def test_a_window_carried_into_a_workspace_without_a_layout_enters_where_sway_puts_it(session):
     s = session("master", workspaces={"1": "default", "10": "master"}, config=CONFIG, outputs=2)
     s.command("workspace 1")
@@ -267,6 +308,60 @@ def test_a_window_carried_into_a_workspace_without_a_layout_enters_where_sway_pu
     assert s.focused() == "b3"
     s.key("F1")
     assert (s.shape("1"), s.shape("10")) == ("H[a1 a2]", "H[b1 V[b2 b3]]")
+
+
+@pytest.mark.parametrize("layout, focus, left, entered", [
+    ("wide", "a1", "V[a2 H[a3 a4]]", "H[b1 a1]"),
+    ("wide", "a2", "V[a1 H[a3 a4]]", "H[b1 a2]"),
+    ("master", "a1", "H[a2 V[a3 a4]]", "H[b1 a1]"),
+    ("grid", "a1", "V[H[a2 a3] a4]", "H[b1 a1]"),
+    ("dwindle", "a1", "H[a2 V[a3 a4]]", "H[b1 a1]"),
+])
+def test_a_window_leaving_a_layout_for_a_workspace_without_one_crosses(session, layout, focus, left, entered):
+    s = session("master", workspaces={"1": layout, "10": "default"}, config=CONFIG, outputs=2)
+    s.command("workspace 10")
+    s.open("b1")
+    s.command("workspace 1")
+    for title in ("a1", "a2", "a3", "a4"):
+        s.open(title)
+    s.focus(focus)
+    drawn = s.drawn(lambda: s.key("F1"))
+    assert len(drawn) == 1, drawn
+    assert (s.shape("1"), s.shape("10")) == (left, entered)
+    assert s.focused() == focus
+
+
+SHAPES = {
+    "H[b1 V[b2 b3]]": ["[title=^b2$] focus", "split v", "[title=^b3$] focus", "move left", "[title=^b1$] focus"],
+    "H[V[b1 b2] b3]": ["[title=^b1$] focus", "split v", "[title=^b2$] focus", "move left"],
+    "V[H[b1 b2] b3]": ["[title=^b1$] focus", "focus parent", "layout splitv", "[title=^b1$] focus", "split h",
+                       "[title=^b2$] focus", "move up", "[title=^b1$] focus"],
+    "V[b1 b2 b3]": ["[title=^b1$] focus", "focus parent", "layout splitv", "[title=^b2$] focus"],
+    "T[b1 b2 b3]": ["[title=^b1$] focus", "focus parent", "layout tabbed"],
+}
+
+
+@pytest.mark.parametrize("shape", SHAPES)
+@pytest.mark.parametrize("key", ["F1", "F2"])
+def test_a_window_from_a_layout_enters_a_workspace_without_one_as_sways_own_move_does(session, shape, key):
+    """`doorway` against sway: the same window from a workspace without a layout."""
+    there, here = ("10", "1") if key == "F1" else ("1", "10")
+    found = []
+    for layout in ("master", "default"):
+        s = session("master", workspaces={here: layout, there: "default"}, config=CONFIG, outputs=2)
+        s.command(f"workspace {there}")
+        for title in ("b1", "b2", "b3"):
+            s.open(title)
+        for command in SHAPES[shape]:
+            s.command(command)
+        assert s.shape(there, exact=True) == shape
+        s.command(f"workspace {here}")
+        s.open("a1")
+        s.open("a2")
+        s.focus("a1" if key == "F1" else "a2")
+        s.key(key)
+        found.append(s.shape(there, exact=True))
+    assert found[0] == found[1]
 
 
 @pytest.mark.parametrize("layout", ["master", "wide", "grid", "dwindle"])
