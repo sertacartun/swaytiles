@@ -31,7 +31,8 @@ W, H, FPS = 1920, 1080, 60
 BPM = 120
 BEAT = 60 / BPM
 BAR = 4 * BEAT
-LENGTH = 12 * BAR
+LENGTH = 13 * BAR
+DROP = 2 * BAR
 
 UI = "Fira Sans"
 DISPLAY = "Poppins"
@@ -165,10 +166,11 @@ def shadow(ctx, x, y, w, h, r, strength):
 TITLE_H = 28
 
 
-def arrange(name, ids, area):
+def arrange(name, ids, area, tree=None, active=None):
     """Each window's rectangle and whether it shows, the tab and stacked
-    title bars, and the drawing order, for the tree swaytiles builds."""
-    tree = swaytiles.normalize(swaytiles.LAYOUTS[name](list(ids)))
+    title bars, and the drawing order, for the tree swaytiles builds (or
+    the tree given, as sway would draw it with `active` focused)."""
+    tree = tree or swaytiles.normalize(swaytiles.LAYOUTS[name](list(ids)))
     rects, bars = {}, []
     x, y, w, h = area
 
@@ -182,10 +184,11 @@ def arrange(name, ids, area):
             rows = 1 if layout == "tabbed" else count
             bar = rows * TITLE_H
             frame = (x + GAP / 2, y + GAP / 2, w - GAP, h - GAP)
-            bars.append((layout, frame, [leaf for leaf in children if isinstance(leaf, int)], children[0]))
-            for index, child in enumerate(children):
+            shown = active if active in children else children[0]
+            bars.append((layout, frame, [leaf for leaf in children if isinstance(leaf, int)], shown))
+            for child in children:
                 if isinstance(child, int):
-                    rects[child] = ((frame[0], frame[1] + bar, frame[2], frame[3] - bar), 1.0 if index == 0 else 0.0, False)
+                    rects[child] = ((frame[0], frame[1] + bar, frame[2], frame[3] - bar), 1.0 if child == shown else 0.0, False)
             return
         if layout == "float":
             step = 0.4 / max(count - 1, 1)
@@ -513,7 +516,7 @@ class Scene:
         self.order = []           # tiling order, master first
         self.z = []
         self.layout = "master"
-        self.layouts = [(-1e9, "master")]
+        self.layouts = [(-1e9, "default")]
         self.bars = [(-1e9, [])]
         self.focused = [(-1e9, None)]
         self.captions = []
@@ -538,11 +541,11 @@ class Scene:
     def add(self, window):
         self.windows[window.id] = window
 
-    def tile(self, t, length=0.5, ease=out_expo, layout=None):
+    def tile(self, t, length=0.5, ease=out_expo, layout=None, tree=None, active=None):
         if layout:
             self.layout = layout
             self.layouts.append((t, layout))
-        rects, bars, z = arrange(self.layout, self.order, self.area())
+        rects, bars, z = arrange(self.layout, self.order, self.area(), tree, active)
         for id, (rect, visible, titled) in rects.items():
             window = self.windows[id]
             window.rect.to(t, rect, length, ease)
@@ -583,108 +586,117 @@ def build(brand=True):
     for window in s.windows.values():
         window.opened = -2.0
 
-    # Hook: windows piled up by hand.
-    x0, y0, _, _ = s.area()
-    mess = {1: (x0 + 60, y0 + 40, 780, 480), 2: (x0 + 520, y0 + 140, 700, 520), 3: (x0 + 230, y0 + 300, 640, 420),
-            4: (x0 + 820, y0 + 30, 600, 400), 5: (x0 + 980, y0 + 360, 440, 420)}
-    for id, rect in mess.items():
-        s.windows[id].rect.to(-1, rect, 0)
-        s.windows[id].shown.to(-1, 1.0, 0)
-    s.order = [1, 2, 3, 4, 5]
-    s.z.append((-1e9, [1, 4, 5, 2, 3]))
-    s.focus(-1, 3)
-    # the cursor drags the terminal around, to no end
-    s.cursor.to(-1, (x0 + 560.0, y0 + 316.0), 0)
-    drag = [(0.15, (x0 + 400.0, y0 + 360.0)), (0.6, (x0 + 640.0, y0 + 250.0)), (1.05, (x0 + 470.0, y0 + 420.0)), (1.5, (x0 + 700.0, y0 + 330.0))]
-    for t, (cx, cy) in drag:
-        s.cursor.to(t, (cx, cy), 0.42, in_out_cubic)
-        s.windows[3].rect.to(t, (cx - 330, cy - 16, 640, 420), 0.42, in_out_cubic)
-    for id, rect in mess.items():
-        if id != 3:
-            s.windows[id].rect.to(0.0, (rect[0] + 14, rect[1] - 8, rect[2], rect[3]), 1.8, in_out_cubic)
-    s.camera.to(-1, (1.06, W / 2, H / 2 + 20), 0)
-    s.caption(0.15, 1.92, "Still dragging windows around?", "dragging")
+    # Hook: plain sway. Each new window squeezes in beside the last, and
+    # anything better is split and tabbed by hand.
+    s.order = [1, 2, 3, 4]
+    s.focus(-1, 1)
+    s.windows[1].shown.to(-1, 1.0, 0)
+    s.tile(-1, 0, tree=("splith", [1]))
+    for index, id in enumerate((2, 3, 4)):
+        t = (index + 1) * BEAT
+        s.press(t - 0.05, "Super", "Enter")
+        s.windows[id].opened = t
+        s.windows[id].shown.to(t, 1.0, 0.45, linear)
+        s.tile(t, 0.4, tree=("splith", [1, 2, 3, 4][:index + 2]))
+        s.focus(t, id)
+        s.sounds.append((t, "pop", None))
+    s.caption(0.1, 1.95, "New windows just squeeze in.", "squeeze in.")
+    s.camera.to(-1, (1.04, W / 2, H / 2 + 10), 0)
+    s.press(2.0, "Super", "W")
+    s.tile(2.05, 0.35, tree=("tabbed", [1, 2, 3, 4]), active=4)
+    s.press(2.5, "Super", "E")
+    s.tile(2.55, 0.35, tree=("splith", [1, 2, 3, 4]))
+    s.press(3.0, "Super", "V")
+    s.press(3.25, "Super", "Enter")
+    s.order.append(5)
+    s.windows[5].opened = 3.3
+    s.windows[5].shown.to(3.3, 1.0, 0.45, linear)
+    s.tile(3.3, 0.4, tree=("splith", [1, 2, 3, ("splitv", [4, 5])]))
+    s.focus(3.3, 5)
+    s.sounds.append((3.3, "pop", None))
+    s.press(3.6, "Super", "S")
+    s.tile(3.65, 0.3, tree=("splith", [1, 2, 3, ("stacked", [4, 5])]), active=5)
+    s.caption(2.0, 3.95, "Still splitting and tabbing by hand?", "by hand?")
 
-    # The drop: everything snaps into place.
-    t = 2 * BEAT * 2
+    # The drop: swaytiles lays them out.
+    t = DROP
     s.sounds.append((t, "impact", None))
-    s.cursor.to(t, (W + 80.0, H + 80.0), 0.5, out_cubic)
-    s.tile(t, 0.55, lambda p: out_back(p, 1.2))
+    s.tile(t, 0.55, lambda p: out_back(p, 1.2), layout="master")
+    s.focus(t, 1)
     s.camera.to(t, (1.0, W / 2, H / 2), 0.7, out_expo)
-    s.snapped.to(t, 1.0, 0.5, out_cubic)
-    s.caption(t + 0.08, 3.9, "Let them fall into place.", "fall into place")
+    s.caption(t + 0.08, t + 1.9, "Let swaytiles lay them out.", "lay them out.")
 
     # Brand.
     if brand:
-        s.screen.to(4.0, 0.0, 0.6, out_expo)
-        s.brand.to(4.0, 1.0, 0.5, out_expo)
-        s.sounds.append((4.0, "whoosh", None))
-        s.brand.to(5.75, 0.0, 0.35, out_cubic)
-        s.screen.to(5.8, 1.0, 0.5, out_expo)
+        s.screen.to(6.0, 0.0, 0.6, out_expo)
+        s.brand.to(6.0, 1.0, 0.5, out_expo)
+        s.sounds.append((6.0, "whoosh", None))
+        s.brand.to(7.75, 0.0, 0.35, out_cubic)
+        s.screen.to(7.8, 1.0, 0.5, out_expo)
 
     # Open and close.
-    s.caption(6.0, 7.95, "Open. Close. Always tidy.", "Always tidy.")
-    s.press(6.25, "Super", "Enter")
+    s.caption(8.0, 9.95, "Open. Close. Always tidy.", "Always tidy.")
+    s.press(8.25, "Super", "Enter")
     s.order.append(6)
-    s.windows[6].opened = 6.3
-    s.windows[6].shown.to(6.3, 1.0, 0.5, linear)
-    s.tile(6.3, 0.5)
-    s.focus(6.3, 6)
-    s.sounds.append((6.3, "pop", 0))
-    s.focus(6.95, 4)
-    s.press(7.25, "Super", "Shift", "Q")
-    s.windows[4].shown.to(7.3, 0.0, 0.28, out_cubic)
-    s.sounds.append((7.3, "close", None))
+    s.windows[6].opened = 8.3
+    s.windows[6].shown.to(8.3, 1.0, 0.5, linear)
+    s.tile(8.3, 0.5)
+    s.focus(8.3, 6)
+    s.sounds.append((8.3, "pop", 0))
+    s.focus(8.95, 4)
+    s.press(9.25, "Super", "Shift", "Q")
+    s.windows[4].shown.to(9.3, 0.0, 0.28, out_cubic)
+    s.sounds.append((9.3, "close", None))
     s.order.remove(4)
-    s.tile(7.38, 0.5)
-    s.focus(7.38, 6)
+    s.tile(9.38, 0.5)
+    s.focus(9.38, 6)
 
     # The menu.
-    s.caption(8.0, 11.9, "Pick a layout for each workspace.", "each workspace")
-    s.press(8.0, "Super", "Shift", "T")
-    s.menu.to(8.1, 1.0, 0.45, out_expo)
-    s.menu_opened = 8.1
-    s.sounds.append((8.1, "open", None))
-    s.camera.to(8.1, (1.1, W / 2, H / 2 + 10), 1.2, in_out_cubic)
-    for t, index in ((9.0, 4.0), (9.5, 5.0)):
+    s.caption(10.0, 13.9, "Pick a layout for each workspace.", "each workspace")
+    s.press(10.0, "Super", "Shift", "T")
+    s.menu.to(10.1, 1.0, 0.45, out_expo)
+    s.menu_opened = 10.1
+    s.sounds.append((10.1, "open", None))
+    s.camera.to(10.1, (1.1, W / 2, H / 2 + 10), 1.2, in_out_cubic)
+    for t, index in ((11.0, 4.0), (11.5, 5.0)):
         s.press(t, "↓")
         s.selection.to(t, index, 0.3, out_expo)
-    s.press(10.0, "Enter")
-    s.menu.to(10.05, 0.0, 0.3, out_cubic)
-    s.sounds.append((10.05, "impact", None))
-    s.tile(10.1, 0.6, lambda p: out_back(p, 1.1), layout="wide")
-    s.camera.to(10.1, (1.0, W / 2, H / 2), 0.9, out_expo)
+    s.press(12.0, "Enter")
+    s.menu.to(12.05, 0.0, 0.3, out_cubic)
+    s.sounds.append((12.05, "impact", None))
+    s.tile(12.1, 0.6, lambda p: out_back(p, 1.1), layout="wide")
+    s.camera.to(12.1, (1.0, W / 2, H / 2), 0.9, out_expo)
 
     # The montage, one layout a beat.
-    s.caption(12.0, 15.95, "12 layouts. One key away.", "12 layouts.")
+    s.caption(14.0, 17.95, "12 layouts. One key away.", "12 layouts.")
     montage = ["centered", "grid", "dwindle", "spiral", "tabbed-master", "stacked-master", "float", "master"]
     for index, name in enumerate(montage):
-        t = 12.0 + index * BEAT
+        t = 14.0 + index * BEAT
         s.tile(t, 0.38, out_expo, layout=name)
         s.chips.append((t, name))
         s.sounds.append((t, "tick", index))
 
     # Swap.
-    s.caption(16.0, 17.95, "Swap anything into the spotlight.", "spotlight.")
+    s.caption(18.0, 19.95, "Swap anything into the spotlight.", "spotlight.")
     rects = arrange("master", s.order, s.area())[0]
     tx, ty, tw, th = rects[3][0]
-    s.cursor.to(15.9, (W - 260.0, H - 120.0), 0)
-    s.cursor.to(16.0, (tx + tw * 0.55, ty + th * 0.5), 0.55, in_out_cubic)
-    s.clicks.append(16.6)
-    s.sounds.append((16.6, "click", None))
-    s.focus(16.6, 3)
-    s.press(17.0, "Super", "M")
+    s.cursor.to(17.9, (W - 260.0, H - 120.0), 0)
+    s.cursor.to(18.0, (tx + tw * 0.55, ty + th * 0.5), 0.55, in_out_cubic)
+    s.clicks.append(18.6)
+    s.sounds.append((18.6, "click", None))
+    s.focus(18.6, 3)
+    s.press(19.0, "Super", "M")
     s.order.remove(3)
     s.order.insert(0, 3)
-    s.tile(17.05, 0.6, lambda p: out_back(p, 1.1))
-    s.sounds.append((17.05, "swap", None))
-    s.cursor.to(17.3, (W + 80.0, H + 80.0), 0.6, in_out_cubic)
+    s.tile(19.05, 0.6, lambda p: out_back(p, 1.1))
+    s.sounds.append((19.05, "swap", None))
+    s.cursor.to(19.3, (W + 80.0, H + 80.0), 0.6, in_out_cubic)
 
     # Call to action.
-    s.screen.to(18.0, 0.0, 0.8, out_expo)
-    s.outro.to(18.0, 1.0, 0.6, out_expo)
-    s.sounds.append((18.0, "whoosh", None))
-    s.sounds.append((18.0, "impact", None))
+    s.screen.to(20.0, 0.0, 0.8, out_expo)
+    s.outro.to(20.0, 1.0, 0.6, out_expo)
+    s.sounds.append((20.0, "whoosh", None))
+    s.sounds.append((20.0, "impact", None))
     return s
 
 
@@ -1074,7 +1086,7 @@ def frame(scene, t, surface):
         for id in order:
             scene.windows[id].draw(ctx, t, scene)
         title_bars(ctx, scene, t)
-        snap = window_of(t, 2.0, 0.35)
+        snap = window_of(t, DROP, 0.35)
         if 0 < snap < 1:
             ctx.rectangle(x, y, w, h)
             ctx.set_source_rgba(1, 1, 1, 0.22 * (1 - snap))
@@ -1089,8 +1101,8 @@ def frame(scene, t, surface):
     chip(ctx, scene, t)
     ctx.restore()
     keycaps(ctx, scene, t)
-    brand(ctx, t, scene.brand(t), 4.0, False)
-    brand(ctx, t, scene.outro(t), 18.0, True)
+    brand(ctx, t, scene.brand(t), 6.0, False)
+    brand(ctx, t, scene.outro(t), 20.0, True)
     caption(ctx, scene, t)
     end = clamp((t - (LENGTH - 0.6)) / 0.6)
     if end > 0:
@@ -1173,17 +1185,17 @@ def soundtrack(scene):
               ("C3", ["G3", "C4", "E4", "G4"]), ("G2", ["G3", "B3", "D4", "F#4"])]
     bars = int(LENGTH / BAR)
     for bar in range(bars):
-        root, voicing = chords[bar % 4] if bar < 10 else chords[0]
+        root, voicing = chords[bar % 4] if bar < 11 else chords[0]
         start = bar * BAR
         length = BAR if bar < bars - 1 else BAR + 0.5
         n = int(length * RATE)
         chord = sum(saw(note(v), length, detune) for v in voicing for detune in (-0.004, 0.0, 0.005))
         cutoff = 900 + 1400 * min(1, bar / 3) if bar != 0 else np.linspace(300, 1400, n)
-        if bar >= 9:
+        if bar >= 10:
             cutoff = np.linspace(2400, 700, n)
         tone = onepole(chord, cutoff if np.isscalar(cutoff) else 1200) if np.isscalar(cutoff) else lowpass(chord, cutoff)
         place_into(pad, start, tone * envelope(n, 0.05, 0.12), 0.05)
-        if 1 <= bar < 9:
+        if 1 <= bar < 10:
             for eighth in range(8):
                 when = start + eighth * BEAT / 2
                 octave = 2 if eighth % 2 else 1
@@ -1191,7 +1203,7 @@ def soundtrack(scene):
                 b = saw(freq, BEAT / 2 * 0.9) + 0.5 * saw(freq, BEAT / 2 * 0.9, 0.006)
                 b = onepole(b, 380 + 260 * (eighth % 2))
                 place_into(bass, when, b * envelope(len(b), 0.004, 0.06), 0.28)
-        if 2 <= bar < 9:
+        if 2 <= bar < 10:
             for beat in range(4):
                 when = start + beat * BEAT
                 k_len = int(0.32 * RATE)
@@ -1204,12 +1216,12 @@ def soundtrack(scene):
                     noise = highpass(rng.standard_normal(s_len), 1200) * np.exp(-np.arange(s_len) / RATE * 18)
                     body = np.sin(2 * np.pi * 190 * np.arange(s_len) / RATE) * np.exp(-np.arange(s_len) / RATE * 30)
                     place_into(drums, when, noise * 0.5 + body * 0.4, 0.55)
-                for sixteenth in range(4 if 6 <= bar < 8 else 2):
-                    hat_when = when + (sixteenth + (0 if 6 <= bar < 8 else 0.5)) * BEAT / (4 if 6 <= bar < 8 else 2)
+                for sixteenth in range(4 if 7 <= bar < 9 else 2):
+                    hat_when = when + (sixteenth + (0 if 7 <= bar < 9 else 0.5)) * BEAT / (4 if 7 <= bar < 9 else 2)
                     h_len = int(0.05 * RATE)
                     hat = highpass(rng.standard_normal(h_len), 7000) * np.exp(-np.arange(h_len) / RATE * 70)
                     place_into(drums, hat_when, hat, 0.16 if sixteenth % 2 else 0.22)
-        if 3 <= bar < 11:
+        if 4 <= bar < 12:
             tones = [note(v) * 2 for v in voicing]
             pattern = [0, 1, 2, 3, 2, 1, 2, 3, 0, 2, 1, 3, 2, 1, 3, 2]
             for step, which in enumerate(pattern):
@@ -1218,10 +1230,10 @@ def soundtrack(scene):
                 tt = np.arange(int(length_p * RATE)) / RATE
                 freq = tones[which]
                 pluck = (np.sign(np.sin(2 * np.pi * freq * tt)) * 0.5 + np.sin(2 * np.pi * freq * tt)) * np.exp(-tt * 22)
-                place_into(arp, when, onepole(pluck, 3200), 0.07 * (1 if bar < 10 else 1 - (bar - 9) / 2))
+                place_into(arp, when, onepole(pluck, 3200), 0.07 * (1 if bar < 11 else 1 - (bar - 10) / 2))
     # sidechain: duck the pad and bass under the kick
     duck = np.ones(total)
-    for bar in range(2, 9):
+    for bar in range(2, 10):
         for beat in range(4):
             i = int((bar * BAR + beat * BEAT) * RATE)
             n = int(0.25 * RATE)
@@ -1231,7 +1243,7 @@ def soundtrack(scene):
     pad *= duck
     bass *= duck
     # the hook's riser
-    n = int(2.0 * RATE)
+    n = int(DROP * RATE)
     riser = lowpass(rng.standard_normal(n), np.geomspace(200, 9000, n)) * np.linspace(0, 1, n) ** 2
     place_into(fx, 0.0, riser, 0.22)
     for when, kind, extra in scene.sounds:
@@ -1265,7 +1277,7 @@ def soundtrack(scene):
             tick = highpass(rng.standard_normal(n), 2500) * np.exp(-np.arange(n) / RATE * 120)
             place_into(fx, when, tick, 0.35)
     # the logo's three notes and the last chord's bell
-    for start in (4.0, 18.0):
+    for start in (6.0, 20.0):
         for k, name in enumerate(("A5", "C6", "E6")):
             n = int(1.4 * RATE)
             tt = np.arange(n) / RATE
@@ -1388,7 +1400,7 @@ def social_png(path):
     surface.write_to_png(str(path))
 
 
-HERO = [(0.0, 4.0), (6.0, 17.95)]
+HERO = [(0.0, 6.0), (8.0, 19.95)]
 HERO_SIZE, HERO_FPS = (1024, 576), 25
 
 
