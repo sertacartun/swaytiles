@@ -140,3 +140,10 @@ They run side by side, one per core up to eight, in about two minutes;
 The animations in the README are recorded the same way, in a headless
 sway, with `uv run python docs/record.py`. That also needs `grim`,
 ImageMagick and the Fira Sans font.
+
+The logo, the layout pictures, the drawn animation at the top of the
+README and the card for links to the repository (`docs/social.png`) are
+made with `python3 docs/promo.py assets`; `python3 docs/promo.py video
+FILE.mp4` makes the promo video with its music. They take the layouts
+from swaytiles itself and need pycairo, numpy, scipy, ffmpeg and the
+Poppins, Fira Sans and JetBrains Mono Nerd Font fonts.

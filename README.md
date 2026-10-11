@@ -1,16 +1,37 @@
-# swaytiles
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo.svg">
+    <img alt="swaytiles" src="docs/logo-light.svg" width="440">
+  </picture>
+</p>
 
-Tiling layouts for [sway](https://swaywm.org), one per workspace: master
-and stack, centred master, dwindle, spiral, grid, tabs and floating.
-Anything you arrange by hand wins over the layout.
+<p align="center">
+  Tiling layouts for <a href="https://swaywm.org">sway</a>, one per workspace.<br>
+  Anything you arrange by hand wins over the layout.
+</p>
 
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="docs/layouts.md">Layouts</a> ·
+  <a href="docs/details.md">Details</a> ·
+  <a href="ARCHITECTURE.md">Architecture</a>
+</p>
 
+<p align="center">
+  <img alt="Windows that squeeze in side by side and are split and tabbed by hand fall into a master and stack layout, a layout is picked from the menu, the layouts change one after another and a window is swapped with the master" src="docs/hero.webp">
+</p>
 
+The animation above is drawn. Here is swaytiles in a real sway session:
 
 https://github.com/user-attachments/assets/06af8569-7a35-4198-a915-d71e2e0efaaf
 
+## Layouts
 
+<a href="docs/layouts.md"><img alt="master, master-right, wide, centered, tabbed-master, stacked-master, dwindle, spiral, grid, float, tabbed and stacking" src="docs/layouts.svg"></a>
 
+Master and stack on either side or on top, centred master, dwindle,
+spiral, grid, tabs, stacked titles and floating. Each workspace keeps
+its own, and the [layouts page](docs/layouts.md) shows each one at work.
 
 ## Install
 
