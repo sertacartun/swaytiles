@@ -18,7 +18,11 @@
 </p>
 
 <p align="center">
-  <img alt="Windows that squeeze in side by side and are split and tabbed by hand fall into a master and stack layout, a layout is picked from the menu, the layouts change one after another and a window is swapped with the master" src="docs/hero.webp">
+
+
+https://github.com/user-attachments/assets/933e5fc6-19ad-4b2f-ba2e-1004b448b6db
+
+
 </p>
 
 The animation above is drawn. Here is swaytiles in a real sway session:
