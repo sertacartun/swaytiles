@@ -107,10 +107,17 @@ state and nothing else.
 ## The window order
 
 `Daemon.order` is the list the layouts are fed: the first window is the
-master, the rest are the stack in order. New windows are appended. Moves
+master, the rest are the stack in order. New windows are appended, or
+put in front of their workspace's master after `swaytiles new master`
+(`welcome`), on the layouts in `LEADING`. A window is new when the
+daemon has never seen it, so one found in the tree before its `new`
+event comes in gets the same place. Moves
 and swaps edit the list, and a tree changed by hand is read back into it
 with `conforming()`, which finds the order that makes the layout produce
-the tree the user built, if there is one.
+the tree the user built, if there is one. At the start the order is read
+back the same way from the tree, whose order is not the layout's where
+the master is not the first window, as in `centered`, `master-right` and
+`spiral`.
 
 ## One pass: `arrange`
 
@@ -171,10 +178,35 @@ the first frame:
   The exceptions are a grid whose rows are dealt out again as a window
   comes in, from 4 to 5 windows and from 9 to 10: sway draws one frame
   before the daemon rebuilds it.
+- **A new window that leads.** After `swaytiles new master`, `prepare`
+  plans the next window at the top of the stack, right after the master,
+  and marks the master `_layout_ring0_<hex>`; where no plan gets it
+  there, as in `centered`, `dwindle` and `spiral`, where every window
+  moves on by one place, it plans it last and marks every window
+  `_layout_ring<i>_<hex>` by its place. The tile rule ends by
+  marking the window for a moment with `$layout_lead_<hex>`, which names
+  the size of the ring and this daemon. That sets off a ring rule made
+  for that size, made the first time a ring of that size is needed, which swaps the window with the ring windows, the last
+  first: `swap container` hands the places over with their sizes, so the
+  window ends as the master with the master's size and each of the
+  others one place on. sway runs the rules of a window again whenever
+  one of them marks it, which is why the ring has a rule of its own that
+  only the last mark sets off: inside the tile rule it would swap before
+  the window is in its place. Each size has its own rule so no swap is
+  left without a window, which would log an error, and a rule left by a
+  daemon that ran before names that daemon, so it does not swap again.
+  The swaps move the old windows too, so where a window leads the
+  daemon never reads a new window's arrival as a change by hand: when
+  two windows came in on one setting of the rule, or a window of the
+  ring closed as one came in, it builds the layout again.
 - **Used once.** sway keeps the rules of every daemon that ran since it
-  last read its config, and runs them all. Each step uses itself up: the
-  role is set back to none, so an older copy of the rule does nothing
-  more.
+  last read its config (a rule word for word the same is kept once), and
+  runs them all, one copy inside another when marking the window sets off
+  the rest. Each step uses itself up: the role is set back to none, and
+  the sizes to 0, which `resize set` takes as no change, so an older copy
+  of the rule does nothing more. Without that, a copy that goes on after
+  a window that leads has swapped would give the master's size to the
+  old master, now beside it.
 - **The gate.** sway runs `for_window` rules again when a window's marks,
   title or app id change, for every window that has not matched them yet.
   A global rule gives each new window a short-lived `_layout_fresh` mark,
@@ -374,9 +406,14 @@ The moves that use them: to another workspace or output, `nop layout
 hide` (`move scratchpad`), `nop layout float` (`floating toggle`) both
 ways, `nop layout show` (`swaytiles show`), which brings a window back
 from the scratchpad with `scratchpad show` and `floating disable` first,
-and `nop layout close` (the config's `kill` key), which hides the window
-on its way out of the layout and kills it there; a window that is still
-there a second later asked first or will not close, and comes back. The
+and `nop layout close` (the config's `kill` key), which floats the window
+off the layout where it stands, with its size and border, and kills it
+there. Floating over the room it leaves, it covers what the others have
+not drawn yet at their new sizes, as sway keeps a window it closes
+itself drawn until the others are ready; hidden in the scratchpad it
+would show the background in the meantime. A window that is still there
+a second later asked first or will not close, and is tiled again where
+a new window would open (`back`). The
 focus goes to the window that takes the closed one's place, the one the
 layout without it puts most over where it was (`taker`), which is under
 the mouse that focused it. A window closed or moved by sway itself still

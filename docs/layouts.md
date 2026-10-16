@@ -1,7 +1,8 @@
 # Layouts
 
 Every layout is fed the same list: the windows of the workspace in order,
-the first one being the master. Opening a window adds it at the end,
+the first one being the master. Opening a window adds it at the end
+(or, after `swaytiles new master`, at the front, as the master),
 closing one lets the rest move up, and moves and swaps change the order.
 The layout turns that list into a tree of sway containers.
 

@@ -175,9 +175,32 @@ def test_a_window_that_will_not_close_comes_back(session):
     s.open("w3")
     s.focus("stubborn")
     s.key("F10")
-    assert s.shape() == expected("dwindle", 3)
+    # The others take its place at once, as it floats where it stood.
+    assert s.shape() == expected("dwindle", 3) + " F[stubborn]"
     assert s.wait(lambda: s.shape() == expected("dwindle", 4, ["w1", "w2", "w3", "stubborn"]), 3), s.shape()
     assert s.focused() == "stubborn"
+
+
+@pytest.mark.parametrize("border", ["pixel 3", "normal"])
+def test_a_closing_window_covers_its_place_as_it_goes(session, border):
+    # Out of sight, it would leave the background showing until the others
+    # have drawn themselves at their new sizes.
+    s = session("dwindle", config=NATIVE + f"default_border {border}\n")
+    s.open("stubborn")
+    s.fill(3)
+    place = s.node("stubborn")
+    s.focus("stubborn")
+    s.key("F10")
+    cover = s.node("stubborn")
+    assert cover["type"] == "floating_con"
+    # A floating window has its title bar above its rect.
+    top = place["rect"]["y"] + place["deco_rect"]["height"]
+    assert (cover["rect"]["x"], cover["rect"]["y"] - cover["deco_rect"]["y"] + place["deco_rect"]["height"]) == (place["rect"]["x"], top)
+    assert cover["rect"]["width"] == place["rect"]["width"]
+    assert cover["rect"]["height"] + cover["deco_rect"]["height"] == place["rect"]["height"]
+    assert (cover["border"], cover["current_border_width"]) == (place["border"], place["current_border_width"])
+    assert s.wait(lambda: s.node("stubborn")["type"] == "con", 3)
+    assert s.node("stubborn")["border"] == place["border"]
 
 
 def test_closing_focuses_the_window_that_takes_its_place(session):

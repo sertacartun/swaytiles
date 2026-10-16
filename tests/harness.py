@@ -66,12 +66,12 @@ def expected(layout, count, names=None):
 
 
 class Session:
-    def __init__(self, base, layout="master", workspaces=None, config="", outputs=1):
+    def __init__(self, base, layout="master", workspaces=None, config="", outputs=1, new=None):
         self.base = Path(tempfile.mkdtemp(prefix="swl-", dir="/tmp"))
         self.state = Path(base) / "state"
         self.cache = Path(base) / "cache"
         self.state.mkdir(parents=True, exist_ok=True)
-        self.state_file.write_text(json.dumps({"layout": layout, "workspaces": workspaces or {}}))
+        self.state_file.write_text(json.dumps({"layout": layout, "workspaces": workspaces or {}, **({"new": new} if new else {})}))
         self.errors = Path(base) / "daemon.err"
         self.sent = Path(base) / "daemon.sent"
         self.ready = Path(base) / "daemon.ready"

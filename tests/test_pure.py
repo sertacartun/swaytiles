@@ -122,7 +122,11 @@ def test_state_is_validated(tmp_path, monkeypatch):
     assert sl.load_state()["layout"] == "default"
     assert sl.load_state()["workspaces"] == {"1": "grid"}
     (tmp_path / "state.json").write_text(json.dumps({"layout": "sway", "workspaces": {"1": "sway"}}))
-    assert sl.load_state() == {"layout": "default", "workspaces": {"1": "default"}}
+    assert sl.load_state() == {"layout": "default", "new": "stack", "workspaces": {"1": "default"}}
+    (tmp_path / "state.json").write_text(json.dumps({"layout": "grid", "workspaces": {}, "new": "master"}))
+    assert sl.load_state()["new"] == "master"
+    (tmp_path / "state.json").write_text(json.dumps({"layout": "grid", "workspaces": {}, "new": "first"}))
+    assert sl.load_state()["new"] == "stack"
     sl.save_state({"layout": "grid", "workspaces": {}})
     assert json.loads((tmp_path / "state.json").read_text())["layout"] == "grid"
     assert list(tmp_path.iterdir()) == [tmp_path / "state.json"]
