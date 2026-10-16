@@ -127,3 +127,16 @@ def test_a_window_opening_on_a_workspace_emptied_is_drawn_on_its_own(session, la
         os.kill(s.daemon.pid, signal.SIGCONT)
     # Right under the workspace; which way the workspace splits shows nothing.
     assert first in ("H[w2]", "V[w2]")
+
+
+@pytest.mark.parametrize("layout", TILING)
+def test_a_restart_keeps_the_order(session, layout):
+    # The tree has the windows in another order than the layout where the
+    # master is not the first one, as in centered.
+    s = session(layout).fill(4)
+    before = s.shape()
+    s.stop_daemon()
+    s.start_daemon()
+    assert s.shape() == before
+    s.open("w5")
+    assert s.shape() == expected(layout, 5)

@@ -40,6 +40,8 @@ swaytiles --wait          # run it for every sway session, as the service does
 swaytiles menu --launcher fuzzel   # pick a layout, in the menu program you name
 swaytiles grid            # set a layout for the focused workspace
 swaytiles default grid    # set the layout of workspaces opened from now on
+swaytiles new master      # new windows open as the master, as in dwm
+swaytiles new stack       # new windows join the end of the stack (the default)
 swaytiles swap            # swap the focused window with the master
 swaytiles move left       # move the focused window: left, right, up, down
 swaytiles move number 3   # send the focused window to a workspace
@@ -65,6 +67,17 @@ floats, as that workspace's layout says. `swaytiles swap` swaps the focused wind
 master; on the master itself it swaps with the top of the stack. Sizes
 stay where they are.
 
+`swaytiles new master` makes every window that opens take the master's
+place, on every workspace, as in dwm: the old master goes to the top of
+the stack and the rest move down one place. The new window takes the
+master's size, and is drawn there from the first frame. It applies to
+the layouts with a master (`master`, `master-right`, `wide`,
+`tabbed-master`, `stacked-master`, `centered`, `dwindle` and `spiral`);
+in `tabbed`, `stacking` and `grid` a window opens as before. Windows that
+come from another workspace, the scratchpad or a float join the stack as
+usual. `swaytiles new stack` turns it off. The choice is kept, and
+`nop layout new master` does the same from a binding.
+
 `swaytiles show` takes a window out of the scratchpad and puts it on
 the focused workspace where a new window would open, tiled into the
 layout, or in the next cascade slot on a float workspace. It is one
@@ -82,7 +95,8 @@ binding that does more than move (`move left; focus left`). For those,
 bind `exec swaytiles move left` yourself, or `nop layout move left`,
 which the daemon reads from sway's binding events without a process
 being started. `nop layout master` is the same for `swaytiles swap`,
-`nop layout show` for `swaytiles show`, `nop layout close` for `kill`,
+`nop layout show` for `swaytiles show`, `nop layout new master|stack`
+for `swaytiles new master|stack`, `nop layout close` for `kill`,
 `nop layout hide` for `move scratchpad` and `nop layout float toggle`
 for `floating toggle`.
 
@@ -98,7 +112,9 @@ for `floating toggle`.
 - **Closing.** The key bound to `kill` is taken over the same way, so a
   window closed from the middle of a layout leaves no hole for sway to
   draw: the others take their places as it goes, and the focus goes to
-  the window that takes its place, the one under the mouse. A window that asks
+  the window that takes its place, the one under the mouse. The window
+  stays drawn where it was until it is gone, so the background does not
+  show while the others redraw at their new sizes. A window that asks
   before it closes, or will not, comes back after a second. A window
   that closes by itself leaves its hole for a moment.
 - **Menu program.** `swaytiles menu --launcher NAME` opens the menu in
@@ -119,8 +135,8 @@ for `floating toggle`.
 
 ## Files
 
-- `~/.local/state/swaytiles.json`: the layout of every workspace and
-  the one for new workspaces.
+- `~/.local/state/swaytiles.json`: the layout of every workspace, the
+  one for new workspaces, and where new windows open.
 - `$XDG_RUNTIME_DIR/swaytiles.*`: the lock, and the last arrangement of
   the running session with the windows kept tiled on float workspaces.
 

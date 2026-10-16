@@ -24,8 +24,9 @@ MARK = "_layout"
 FLOATED = "_layout_floated"
 AFTER = "_layout_after_"
 SIZED = "_layout_sized_"
+RING = "_layout_ring"
 # The marks that point the tile rule at the place of the next window.
-PLACING = (AFTER, SIZED)
+PLACING = (AFTER, SIZED, RING)
 NEXT = 0
 SYNC = "layout:sync"
 ACT = "layout:act"
@@ -310,6 +311,9 @@ DESCRIPTIONS = {
     "grid": "Even grid",
     "float": "All windows floating",
 }
+# The layouts a new window can lead, as `swaytiles new master` asks.
+LEADING = ("master", "master-right", "wide", "tabbed-master", "stacked-master", "centered", "dwindle", "spiral")
+NEW = ("stack", "master")
 
 
 def normalize(node):
@@ -508,6 +512,14 @@ def windows(workspace):
     return [*leaf_nodes(workspace), *workspace["floating_nodes"]]
 
 
+def everyone(node):
+    """The ids of every window under `node`, the scratchpad's and those in floating containers too."""
+    found = {node["id"]} if node["type"] in ("con", "floating_con") and not node["nodes"] else set()
+    for child in node["nodes"] + node["floating_nodes"]:
+        found |= everyone(child)
+    return found
+
+
 def outputs(tree):
     return [output for output in tree["nodes"] if output["name"] != "__i3"]
 
@@ -558,9 +570,14 @@ def criteria(name):
     return re.escape(name).replace('"', '\\"')
 
 
+def loosely(name):
+    """`name` for a pattern free of quotes and spaces, any other letter a dot."""
+    return "".join(letter if letter.isascii() and (letter.isalnum() or letter in "_-") else "." for letter in name)
+
+
 def elsewhere(name):
     """A pattern for sway criteria, free of quotes and spaces, that matches the workspaces not called `name`."""
-    return "^(?!" + "".join(letter if letter.isascii() and (letter.isalnum() or letter in "_-") else "." for letter in name) + "$)"
+    return "^(?!" + loosely(name) + "$)"
 
 
 def quoted(name):
@@ -1133,7 +1150,7 @@ def load_state():
         saved = {}
     saved = saved if isinstance(saved, dict) else {}
     chosen = saved.get("workspaces") if isinstance(saved.get("workspaces"), dict) else {}
-    return {"layout": known(saved.get("layout"), LAYOUTS, "default"),
+    return {"layout": known(saved.get("layout"), LAYOUTS, "default"), "new": known(saved.get("new"), NEW, "stack"),
             "workspaces": {name: known(layout, LAYOUTS, None) for name, layout in chosen.items() if known(layout, LAYOUTS, None)}}
 
 
@@ -1196,8 +1213,12 @@ class Daemon:
         self.order = []
         self.rules = {}
         self.anchored = {}
+        self.ringed = set()
+        self.closing = {}
+        self.token = os.urandom(4).hex()
         self.slots = {}
         self.where = {}
+        self.seen = None
         self.heir = None
         self.gone = {}
         self.names = {}
@@ -1243,7 +1264,7 @@ class Daemon:
     def target(self, name, ids):
         return trimmed(self.tiling(name)(ids)) if ids else None
 
-    def inspect(self, workspace, ids, arrived):
+    def inspect(self, workspace, ids, arrived, opened=()):
         name, seen = workspace["name"], self.built.get(workspace["name"])
         if trimmed(shape(workspace)) == self.target(name, ids):
             # As the layout has it, the moves of the tile rule included:
@@ -1251,6 +1272,12 @@ class Daemon:
             return
         if seen is not None:
             had = set(leaves(seen))
+            if self.leads(name) and any(con in opened for con in ids):
+                # A window that leads swapped the others on with it, all the
+                # way only when the rule was set for it: the layout is built
+                # again around a window that came in before the daemon could
+                # set it, or a ring that lost a window as it came.
+                return
             present = without(shape(workspace), *(con for con in ids if con not in had))
             before = without(seen, *had.difference(ids))
             if outline(before) != outline(present):
@@ -1445,9 +1472,9 @@ class Daemon:
         commands = [] if self.anchored else ["set $layout_gate _layout_off", 'for_window [all] "mark --add $$layout_gate; unmark $$layout_gate"',
                                              "[all] mark --add _layout_arm", "unmark _layout_arm", "set $layout_gate _layout_fresh"]
         commands.append(f"set {variable} {AFTER + code if active else '_layout_off'}")
-        role, way, inner = f"$layout_role_{code}", f"$layout_way_{code}", f"$layout_inner_{code}"
+        role, way, inner, lead = f"$layout_role_{code}", f"$layout_way_{code}", f"$layout_inner_{code}", f"$layout_lead_{code}"
         if not active:
-            commands.append(f"set {role} _layout_none_{code}")
+            commands += [f"set {role} _layout_none_{code}", f"set {lead} _layout_none_{code}"]
             self.roles.pop(name, None)
         if name not in self.anchored:
             # The window goes right after the anchor, turns the workspace with
@@ -1457,7 +1484,8 @@ class Daemon:
             # its config.
             axis, share = f"$layout_axis_{code}", f"$layout_share_{code}"
             entry = f"$layout_entry_{code}"
-            commands += [f"set {axis} width", f"set {share} 50", f"set {entry} 0", f"set {role} _layout_none_{code}", f"set {way} right", f"set {inner} splith"]
+            commands += [f"set {axis} width", f"set {share} 50", f"set {entry} 0", f"set {role} _layout_none_{code}", f"set {way} right", f"set {inner} splith",
+                         f"set {lead} _layout_none_{code}"]
             fresh = "[con_mark=^_layout_fresh$]"
             action = (f"[con_mark=^{AFTER + code}$ workspace={elsewhere(name)}] unmark {AFTER + code}",
                       f"{fresh} move container to mark ${variable}", f"{fresh} mark --add ${variable}",
@@ -1472,10 +1500,37 @@ class Daemon:
                       # lean (`entry`; 0 leaves it as it is).
                       f"{fresh} resize set ${axis} ${entry} px",
                       f"[con_mark=^{SIZED + code}$] resize set ${axis} ${share} ppt",
+                      # The sizes are used once too, a size of 0 being no
+                      # change: a copy of the rule that marking the window set
+                      # off inside another, or that runs after a window that
+                      # leads has swapped, does not size anything again.
+                      f"{fresh} set ${entry} 0", f"{fresh} set ${share} 0",
+                      # Marked for a moment, a window that leads sets off the
+                      # ring rule, now that it is in its place.
+                      f"{fresh} mark --add ${lead}", f"{fresh} unmark ${lead}", f"{fresh} set ${lead} _layout_none_{code}",
                       "[con_mark=^_layout_off$] unmark _layout_off")
             commands.append(f'for_window [workspace="^{criteria(name)}$" tiling] "{"; ".join(action)}"')
         self.anchored[name] = active
         return commands
+
+    def ring_rule(self, name, size):
+        """The rule that lets a new window lead, as the tile rule marks it
+        once it is in its place: it swaps places with the `size` windows
+        marked RING, the last first, so it ends in the master's place and
+        size and each of them one place further on. A window that came in at
+        the top of the stack swaps with the master alone; one that came in
+        last moves the whole stack on, as in dwindle. One rule for each
+        size, so no swap is left without a window; their mark names this
+        daemon, so a rule left by one that ran before does not swap again."""
+        if (name, size) in self.ringed:
+            return []
+        self.ringed.add((name, size))
+        code = encoded(name)
+        action = [f"[con_mark=^{RING}{index}_{code}$ workspace=^{loosely(name)}$] swap container with mark _layout_fresh" for index in reversed(range(size))]
+        return [f'for_window [workspace="^{criteria(name)}$" tiling con_mark="^{self.lead(code, size)}$"] "{"; ".join(action)}"']
+
+    def lead(self, code, size):
+        return f"_layout_lead{size}_{code}_{self.token}"
 
     def anchors(self, tree):
         """Point the tile rule of every workspace at the place of its next window."""
@@ -1495,29 +1550,57 @@ class Daemon:
         commands += [f"unmark {mark}" for mark in held if mark not in wanted]
         return commands + [f"[con_id={con}] mark --add {mark}" for mark, con in wanted.items() if held.get(mark) != con]
 
-    def step(self, name, way=None, nest=None):
-        """The commands that set the step the tile rule takes for the next window of `name`, if it changed."""
+    def step(self, name, way=None, nest=None, ring=0):
+        """The commands that set the step the tile rule takes for the next
+        window of `name`, if it changed: with `ring`, it swaps on with that
+        many windows."""
         code = encoded(name)
         role = "both" if way and nest else "turn" if way else "nest" if nest else "none"
-        values = (f"_layout_{role}_{code}", way or "right", layout_command(nest)[7:] if nest else "splith")
+        values = (f"_layout_{role}_{code}", way or "right", layout_command(nest)[7:] if nest else "splith",
+                  self.lead(code, ring) if ring else f"_layout_none_{code}")
         if self.roles.get(name) == values:
             return []
         self.roles[name] = values
-        return [f"set ${key}_{code} {value}" for key, value in zip(("layout_role", "layout_way", "layout_inner"), values, strict=True)]
+        keys = ("layout_role", "layout_way", "layout_inner", "layout_lead")
+        return [f"set ${key}_{code} {value}" for key, value in zip(keys, values, strict=True)]
+
+    def leads(self, name):
+        """Whether a new window on the workspace `name` takes the master's place."""
+        return self.state["new"] == "master" and self.chosen(name) in LEADING
+
+    def welcome(self, tree, con):
+        """Where the new window `con` goes in the order: in front of the
+        master of its workspace where it leads, else last."""
+        workspace = next((ws for ws in workspaces(tree) if con in tiled(ws)), None)
+        ids = self.ordered(tiled(workspace)) if workspace is not None and self.leads(workspace["name"]) else []
+        return self.order.index(ids[0]) if ids else len(self.order)
 
     def prepare(self, ws, name, ids, wanted):
         """The commands that set the tile rule of the workspace for its next
         window, and the marks it needs in `wanted`."""
+        leading = self.leads(name)
         code, now, coming = encoded(name), self.target(name, ids), self.target(name, [*ids, NEXT])
-        commands = []
+        commands, planned, ring = [], None, 0
         if len(ids) == 1 and ws["nodes"] and ws["nodes"][0]["id"] == ids[0] and coming[0] not in TABBED and ws["layout"] != coming[0]:
             # A lone window takes the orientation the workspace has with two,
             # which shows nothing, so the next one comes in at its place.
             commands += [f"[con_id={ids[0]}] move {direction}" for direction in turns(ws["layout"], coming[0])]
             ws = {**ws, "layout": coming[0]}
-        anchor, way, nest = (self.plan(ws, name, coming) if not covered(ws) else None) or (ids[-1], None, None)
+        if not covered(ws):
+            # A window that leads comes in at the top of the stack and swaps
+            # with the master; where every window moves on by one place, as
+            # in dwindle, it comes in last and swaps with the whole ring.
+            choices = [([ids[0], NEXT, *ids[1:]], 1), ([*ids, NEXT], len(ids))] if leading else [([*ids, NEXT], 0)]
+            for order, size in choices:
+                coming = self.target(name, order)
+                if planned := self.plan(ws, name, coming):
+                    ring = size
+                    break
+        # Without a plan it comes in last, and the daemon builds the layout around it.
+        anchor, way, nest = planned or (ids[-1], None, None)
         wanted[AFTER + code] = anchor
-        commands += self.step(name, way, nest)
+        wanted.update({f"{RING}{index}_{code}": con for index, con in enumerate(ids[:ring])})
+        commands += [*(self.ring_rule(name, ring) if ring else []), *self.step(name, way, nest, ring)]
         # A window coming in at the master's level takes room from it: the
         # rule gives the master its saved size at once.
         level = 1 if isinstance(now, int) or now[0] in TABBED else len(now[1])
@@ -1527,7 +1610,7 @@ class Daemon:
         entry = self.entry(name, ws, coming, ids[0], *size) if size else 0
         if size and self.sized.get(name, (None, None))[0] != size:
             commands += [f"set $layout_axis_{code} {size[0]}", f"set $layout_share_{code} {size[1]}"]
-        if entry != self.sized.get(name, (None, 0))[1]:
+        if entry != self.sized.get(name, (None, None))[1]:
             commands.append(f"set $layout_entry_{code} {entry}")
         self.sized[name] = (size if size else self.sized.get(name, (None, 0))[0], entry)
         if size:
@@ -1535,11 +1618,18 @@ class Daemon:
         return commands
 
     def plan(self, workspace, name, target):
-        """`foresee` for the next window of the workspace, worked out again only when the workspace changes."""
-        key = (workspace["layout"], shape(workspace), target)
+        """`foresee` for the next window of the workspace, worked out again
+        only when the workspace changes. A workspace whose next window leads
+        may ask for two targets in a row: each has its plan kept."""
+        key = (workspace["layout"], shape(workspace))
         if self.foreseen.get(name, (None,))[0] != key:
-            self.foreseen[name] = (key, foresee(workspace, target))
-        return self.foreseen[name][1]
+            self.foreseen[name] = (key, [])
+        plans = self.foreseen[name][1]
+        for wanted, found in plans:
+            if wanted == target:
+                return found
+        plans.append((target, foresee(workspace, target)))
+        return plans[-1][1]
 
     def reveal(self, con, width, height, hold=0.0):
         begin = time.monotonic()
@@ -1685,10 +1775,24 @@ class Daemon:
         present = {node["id"] for ws in workspaces(tree) for node in windows(ws)}
         self.tiled = (self.tiled & present) | {con for ids in tiles.values() for con in ids}
         self.order[:] = [con for con in self.order if con in self.tiled]
-        self.order += [con for ids in tiles.values() for con in ids if con not in self.order]
+        unseen = [con for ids in tiles.values() for con in ids if con not in self.order]
+        # A window that opened since the daemon last looked, its `new` maybe
+        # still to come, leads where new windows lead; the rest join the end.
+        opened = sorted(con for con in unseen if self.seen is not None and con not in self.seen)
+        self.order += [con for con in unseen if con not in opened]
+        for con in opened:
+            self.order.insert(self.welcome(tree, con), con)
+        if self.seen is None:
+            # At the start the windows are in the order the tree has them,
+            # which is not the layout's where the master is not the first
+            # one, as in centered: the order the layout drew them in is.
+            for workspace in workspaces(tree):
+                if not covered(workspace) and self.tiling(workspace["name"]) is not None and tiles[workspace["id"]]:
+                    reorder(self.order, conforming(self.tiling(workspace["name"]), shape(workspace)) or [])
+        self.seen = everyone(tree)
         for workspace in workspaces(tree):
             if not covered(workspace) and self.tiling(workspace["name"]) is not None and (ids := self.ordered(tiles[workspace["id"]])):
-                self.inspect(workspace, ids, arrived)
+                self.inspect(workspace, ids, arrived, opened)
         heir = heir if heir in present else None
         focused, onscreen, shaped = heir or focused_node(tree)["id"], visible(tree), False
         for workspace in workspaces(tree):
@@ -1919,10 +2023,13 @@ class Daemon:
     def close(self):
         """`kill` of the focused window. Where the hole it leaves is not the
         layout without it, sway would draw that hole before the daemon could
-        fill it, so the window goes to the scratchpad and the others to their
-        places in the same step, and it is closed from there, the focus going
-        to the window that takes its place. A window still there a moment
-        later asks first or will not close, and comes back."""
+        fill it, so the others go to their places in the same step as the
+        window floats off where it stood, as it was, and it is closed from
+        there, the focus going to the window that takes its place. Floating
+        over the room it leaves, it covers what the others have not drawn
+        yet, as sway's own close keeps a closing window drawn; out of sight
+        in the scratchpad it would show the background. A window still
+        there a moment later asks first or will not close, and comes back."""
         tree = self.sway.tree()
         node, source = focused_window(tree)
         if source is None or node["nodes"] or node["type"] != "con" or self.tiling(source["name"]) is None:
@@ -1941,8 +2048,24 @@ class Daemon:
             # The close event hands the focus on.
             return self.sway.command("kill")
         before, after = self.leaving(source, node, focus=True)
-        self.sway.command(*before, f"[con_id={con}] move scratchpad", *after, f"[con_id={con}] kill")
-        threading.Timer(CLOSING, self.sway.tick, [f"{ACT} show {con}"]).start()
+        rect = node["rect"]
+        self.closing[con] = f"border {node['border']} {node['current_border_width']}" if node["border"] != "none" else "border none"
+        cover = f"[con_id={con}] floating enable, {self.closing[con]}, {placement(rect['width'], rect['height'], rect['x'], rect['y'])}"
+        self.sway.command(*before, cover, *after, f"[con_id={con}] kill")
+        threading.Timer(CLOSING, self.sway.tick, [f"{ACT} back {con}"]).start()
+        return self.sync()
+
+    def back(self, con):
+        """Tile again the window `con` that was asked to close and is still
+        there, with the border it had, where a new window would open, and
+        focus it: it asks something, or will not close."""
+        border = self.closing.pop(con, None)
+        tree = self.sway.tree()
+        workspace = next((ws for ws in workspaces(tree) if any(node["id"] == con for node in ws["floating_nodes"])), None)
+        if border is None or workspace is None:
+            return None
+        entering = self.entering(workspace, con) if self.tiling(workspace["name"]) is not None else []
+        self.sway.command(f"[con_id={con}] floating disable, {border}", *entering, f"[con_id={con}] focus")
         return self.sync()
 
     def unhide(self, con=None):
@@ -2100,7 +2223,7 @@ class Daemon:
             if change == "rename":
                 self.rename(event["current"])
             if change == "reload":
-                for table in (self.rules, self.anchored, self.sized, self.roles, self.adopted):
+                for table in (self.rules, self.anchored, self.ringed, self.sized, self.roles, self.adopted):
                     table.clear()
                 self.adopt()
             self.arrange()
@@ -2112,6 +2235,8 @@ class Daemon:
         elif kind == "window" and change in ("new", "close", "floating", "move"):
             con = event["container"]["id"]
             name, tree = self.where.get(con), None
+            if change == "close":
+                self.closing.pop(con, None)
             if change == "close" and self.tiling(name) is not None:
                 tree = self.sway.tree()
                 workspace = named(tree, name)
@@ -2128,11 +2253,11 @@ class Daemon:
             elif change == "floating":
                 self.kept.pop(con, None)
             if change == "new":
-                # The tile rule has used the steps planned for this window.
+                # The tile rule has used the steps planned for this window,
+                # its sizes too.
                 self.roles.clear()
+                self.sized.clear()
                 self.sync()
-                if con not in self.order:
-                    self.order.append(con)
             self.arrange(con, moved=change == "move", tree=tree)
 
     def adopt(self):
@@ -2174,11 +2299,17 @@ class Daemon:
             self.close()
         elif action.startswith("float ") and action[6:] in ("toggle", "enable", "disable"):
             self.switch(action[6:])
+        elif action.startswith("back ") and action[5:].isdigit():
+            self.back(int(action[5:]))
         elif action == "show" or (action.startswith("show ") and action[5:].isdigit()):
             self.unhide(int(action[5:]) if action[5:] else None)
         elif action.startswith("default ") and action[8:] in LAYOUTS:
             self.state["layout"] = action[8:]
             save_state(self.state)
+        elif action.startswith("new ") and action[4:] in NEW:
+            self.state["new"] = action[4:]
+            save_state(self.state)
+            self.sway.command(*self.anchors(self.sway.tree()))
         elif action.startswith("move ") and action[5:].strip():
             argument = action[5:].strip()
             self.move_to(direction=argument) if argument in SPLITS else self.move_to(target=argument)
@@ -2459,11 +2590,13 @@ def cli():
             return select(Sway(), arguments[0])
         if len(arguments) == 2 and arguments[0] == "default" and RENAMED.get(arguments[1], arguments[1]) in LAYOUTS:
             return act(Sway(), f"default {RENAMED.get(arguments[1], arguments[1])}")
+        if len(arguments) == 2 and arguments[0] == "new" and arguments[1] in NEW:
+            return act(Sway(), f"new {arguments[1]}")
     except ConnectionError as error:
         print(f"swaytiles: {error}", file=sys.stderr)
         return 1
     usage = ("usage: swaytiles [--wait] [--no-keys] | "
-             "swaytiles [menu --launcher COMMAND | swap | show [ID] | move DIRECTION | move number N | config | LAYOUT | default LAYOUT]")
+             "swaytiles [menu --launcher COMMAND | swap | show [ID] | move DIRECTION | move number N | config | LAYOUT | default LAYOUT | new master|stack]")
     print(f"{usage}\nlayouts: {', '.join(LAYOUTS)}", file=sys.stderr)
     return 2
 

@@ -61,6 +61,10 @@ The first opens the layout menu in the program named after `--launcher`:
 fuzzel, rofi, wofi, tofi, bemenu, wmenu or dmenu. The second swaps the
 focused window with the master.
 
+New windows join the end of the stack. To have them open as the master
+instead, as in dwm, run `swaytiles new master` once; `swaytiles new
+stack` goes back.
+
 ## Uninstall
 
 ```sh
