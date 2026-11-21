@@ -35,12 +35,12 @@ The layout turns that list into a tree of sway containers.
 <td width="50%" valign="top">
 <h3><code>tabbed-master</code></h3>
 <img src="gifs/tabbed-master.gif" alt="tabbed-master layout">
-<p>The master on the left, and the stack as tabs on the right, so one stack window is visible at a time at full height. Good for small screens.</p>
+<p>The master on the left, and the stack as tabs on the right, so one stack window is visible at a time at full height. Good for small screens. <code>tabbed-master-right</code> is the same with the master on the right.</p>
 </td>
 <td width="50%" valign="top">
 <h3><code>stacked-master</code></h3>
 <img src="gifs/stacked-master.gif" alt="stacked-master layout">
-<p>The same as <code>tabbed-master</code>, with the stack as a column of stacked titles.</p>
+<p>The same as <code>tabbed-master</code>, with the stack as a column of stacked titles. <code>stacked-master-right</code> has the master on the right.</p>
 </td>
 </tr>
 <tr>

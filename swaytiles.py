@@ -289,7 +289,9 @@ LAYOUTS = {
     "master-right": tile("splith", "splitv", master_last=True),
     "wide": tile("splitv", "splith"),
     "tabbed-master": tile("splith", "tabbed"),
+    "tabbed-master-right": tile("splith", "tabbed", master_last=True),
     "stacked-master": tile("splith", "stacked"),
+    "stacked-master-right": tile("splith", "stacked", master_last=True),
     "centered": centered,
     "dwindle": turning("right", "down"),
     "spiral": turning("right", "down", "left", "up"),
@@ -304,7 +306,9 @@ DESCRIPTIONS = {
     "master-right": "Master right, stack left",
     "wide": "Master on top, stack below",
     "tabbed-master": "Master left, stack as tabs",
+    "tabbed-master-right": "Master right, stack as tabs",
     "stacked-master": "Master left, stack as stacked titles",
+    "stacked-master-right": "Master right, stack as stacked titles",
     "centered": "Master centred, stack on both sides",
     "dwindle": "Splits right, then down, shrinking",
     "spiral": "Clockwise spiral inwards",
@@ -312,7 +316,8 @@ DESCRIPTIONS = {
     "float": "All windows floating",
 }
 # The layouts a new window can lead, as `swaytiles new master` asks.
-LEADING = ("master", "master-right", "wide", "tabbed-master", "stacked-master", "centered", "dwindle", "spiral")
+LEADING = ("master", "master-right", "wide", "tabbed-master", "tabbed-master-right", "stacked-master",
+           "stacked-master-right", "centered", "dwindle", "spiral")
 NEW = ("stack", "master")
 
 
