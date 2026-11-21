@@ -72,7 +72,8 @@ place, on every workspace, as in dwm: the old master goes to the top of
 the stack and the rest move down one place. The new window takes the
 master's size, and is drawn there from the first frame. It applies to
 the layouts with a master (`master`, `master-right`, `wide`,
-`tabbed-master`, `stacked-master`, `centered`, `dwindle` and `spiral`);
+`tabbed-master`, `tabbed-master-right`, `stacked-master`,
+`stacked-master-right`, `centered`, `dwindle` and `spiral`);
 in `tabbed`, `stacking` and `grid` a window opens as before. Windows that
 come from another workspace, the scratchpad or a float join the stack as
 usual. `swaytiles new stack` turns it off. The choice is kept, and

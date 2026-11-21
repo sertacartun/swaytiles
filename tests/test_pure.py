@@ -13,6 +13,8 @@ def test_master_layouts():
     assert sl.LAYOUTS["master-right"]([1, 2, 3]) == ("splith", [("splitv", [2, 3]), 1])
     assert sl.LAYOUTS["wide"]([1, 2]) == ("splitv", [1, ("splith", [2])])
     assert sl.LAYOUTS["tabbed-master"]([1]) == ("splith", [1, ("tabbed", [])])
+    assert sl.LAYOUTS["tabbed-master-right"]([1, 2, 3]) == ("splith", [("tabbed", [2, 3]), 1])
+    assert sl.LAYOUTS["stacked-master-right"]([1, 2, 3]) == ("splith", [("stacked", [2, 3]), 1])
 
 
 def test_centered_falls_back_to_master_below_three_windows():
@@ -151,6 +153,7 @@ def test_the_side_a_move_comes_in_through():
     assert facing("master-right", "left") == [1] and facing("master-right", "right") == [2, 3]
     assert facing("wide", "down") == [1] and facing("wide", "right") == [1, 2]
     assert facing("tabbed-master", "left") == [2, 3]
+    assert facing("tabbed-master-right", "left") == [1] and facing("tabbed-master-right", "right") == [2, 3]
     assert facing("centered", "right") == [3]
     assert sl.facing(sl.normalize(sl.LAYOUTS["master"]([1])), "left") == [1]
 
